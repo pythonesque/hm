@@ -5,7 +5,6 @@ extern crate arena;
 use self::MonoTy as MT;
 use self::PolyTy as PT;
 
-use std::iter::repeat;
 use std::fmt;
 
 use symbol::{Symbol, Symbols};
@@ -72,7 +71,7 @@ impl<'a> fmt::Show for TyFun<'a> {
 }
 
 impl<'a> MonoTy<'a> {
-    fn free<'b>(&'b self) -> TyIter<'a,'b> {
+    pub fn free<'b>(&'b self) -> TyIter<'a,'b> {
         match *self {
             MT::Var(ref a) => TyIter(box Some(a).into_iter()),
             MT::App(_, ref ts) => TyIter(box ts.iter().flat_map( |t| t.free() )),
@@ -107,9 +106,7 @@ impl<'a> fmt::Show for MonoTy<'a> {
 impl<'a> PolyTy<'a> {
     fn free<'b>(&'b self) -> TyIter<'a, 'b> {
         match *self {
-            PT::Quant(a, ref s) => TyIter(box s.free()
-                .zip(repeat(a))
-                .filter_map( |(a_, a)| if *a_ != a { Some(a_) } else { None } )),
+            PT::Quant(a, ref s) => TyIter(box s.free().filter( move |&a_| *a_ != a )),
             PT::Mono(ref t) => t.free(),
         }
     }
@@ -125,7 +122,7 @@ impl<'a> fmt::Show for PolyTy<'a> {
 }
 
 impl<'a> Ty<'a> {
-    fn free<'b>(&'b self) -> TyIter<'a,'b> {
+    pub fn free<'b>(&'b self) -> TyIter<'a,'b> {
         match *self {
             Ty::Mono(ref t) => t.free(),
             Ty::Poly(ref s) => s.free(),
