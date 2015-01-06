@@ -144,6 +144,7 @@ impl<'a> fmt::Show for Ty<'a> {
 
 #[test]
 fn it_works() {
+    use std::collections::HashSet;
     let mut symbols = Symbols::new();
     let fun = TyFun { name: symbols.symbol("→").unwrap(), arity: 2 };
     let set = TyFun { name: symbols.symbol("Set").unwrap(), arity: 1 };
@@ -159,5 +160,5 @@ fn it_works() {
     let s = PT::Quant(symbols.symbol("β").unwrap(), box PT::Mono(t));
     let s = Ty::Poly(PT::Quant(symbols.symbol("α").unwrap(), box s));
     println!("{}", s);
-    println!("{}", s.free().collect::<Vec<_>>());
+    println!("{}", s.free().map( |s| symbols.name(s) ).collect::<HashSet<_>>());
 }
