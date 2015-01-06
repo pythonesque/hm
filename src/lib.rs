@@ -107,8 +107,8 @@ impl<'a> fmt::Show for MonoTy<'a> {
 impl<'a> PolyTy<'a> {
     fn free<'b>(&'b self) -> TyIter<'a, 'b> {
         match *self {
-            PT::Quant(ref a, ref s) => TyIter(box s.free()
-                .zip(repeat(a.clone()))
+            PT::Quant(a, ref s) => TyIter(box s.free()
+                .zip(repeat(a))
                 .filter_map( |(a_, a)| if *a_ != a { Some(a_) } else { None } )),
             PT::Mono(ref t) => t.free(),
         }
