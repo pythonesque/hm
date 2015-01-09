@@ -1,7 +1,5 @@
 use std::cmp::{Ord, Ordering};
 use std::cell::Cell;
-use std::intrinsics;
-use std::num::Int;
 use std::uint;
 use std::u8;
 
@@ -13,20 +11,26 @@ use std::u8;
 /// types to never overflow.  In theory we should constrain it so users can't specify their own
 /// types though.
 #[static_assert]
-static NO_CHECKED_ADD_NEEDED: bool = uint::BITS <= u8::MAX as uint;
+static _NO_CHECKED_ADD_NEEDED: bool = uint::BITS <= u8::MAX as uint;
 
 /// Cannot implemenet Clone and retain correct semantics.
-pub struct UnionFind<'a, I=u32> where I: 'static, I: Copy {
-    parent: Cell<Option<&'a UnionFind<'a,I>>>,
-    rank: Cell<I>
+#[derive(Show)]
+pub struct UnionFind<'a> {
+    parent: Cell<Option<&'a UnionFind<'a>>>,
+    rank: Cell<u8>
 }
 
+impl<'a> PartialEq for UnionFind<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self as *const _ == other as *const _
+    }
+}
 
-impl<'a,I> UnionFind<'a, I> where I: Int + 'static {
-    pub fn new() -> UnionFind<'a, I> {
+impl<'a> UnionFind<'a> {
+    pub fn new() -> UnionFind<'a> {
         UnionFind {
             parent: Cell::new(None),
-            rank: Cell::new(Int::zero())
+            rank: Cell::new(0)
         }
     }
 
@@ -42,10 +46,10 @@ impl<'a,I> UnionFind<'a, I> where I: Int + 'static {
     }
 
     /// Sometimes this can be used instead of Clone
-    pub fn copy(&'a self) -> UnionFind<'a, I> {
+    pub fn copy(&'a self) -> UnionFind<'a> {
         let new = UnionFind {
             parent: Cell::new(Some(self.find())),
-            rank: Cell::new(Int::zero()),
+            rank: Cell::new(0),
         };
         new
     }
@@ -60,7 +64,7 @@ impl<'a,I> UnionFind<'a, I> where I: Int + 'static {
             Ordering::Greater => oroot.parent.set(Some(root)),
             Ordering::Equal => {
                 oroot.parent.set(Some(root));
-                root.rank.set(rank + Int::one());
+                root.rank.set(rank + 1);
             }
         }
     }

@@ -2,7 +2,7 @@ extern crate arena;
 
 use self::MonoTy as MT;
 
-use std::borrow::{Cow, ToOwned};
+use std::borrow::Cow;
 use std::fmt;
 
 use symbol::{Symbol, Table, Symbols};
@@ -88,14 +88,14 @@ impl<'a,'b> MonoTy<'a,'b> {
 
     pub fn free<'c>(&'c self) -> TyVarIter<'a,'c> {
         match *self {
-            MT::Var(ref a, ref uf) => TyVarIter(box Some(a).into_iter()),
-            MT::App(_, ref ts, ref uf) => TyVarIter(box ts.iter().flat_map( |t| t.free() )),
+            MT::Var(ref a, _) => TyVarIter(box Some(a).into_iter()),
+            MT::App(_, ref ts, _) => TyVarIter(box ts.iter().flat_map( |t| t.free() )),
         }
     }
 
     fn subst(&'b self, substs: &'b Table<'a, MonoTy<'a,'b>>) -> MonoTy<'a,'b> {
         match *self {
-            MT::Var(ref a, ref uf) => substs.look(a).unwrap_or(self).copy(),
+            MT::Var(ref a, _) => substs.look(a).unwrap_or(self).copy(),
             MT::App(d, ref ts, ref uf) =>
                 MT::App(d, ts.iter()
                                         .map( |t| t.subst(substs) )
@@ -107,8 +107,8 @@ impl<'a,'b> MonoTy<'a,'b> {
 impl<'a,'b> fmt::Show for MonoTy<'a,'b> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            MT::Var(ref a, ref uf) => Symbols::new().fmt(f,a),
-            MT::App(ref d, ref ts, ref uf) => {
+            MT::Var(ref a, _) => Symbols::new().fmt(f,a),
+            MT::App(ref d, ref ts, _) => {
                 let mut write_space = !d.infix();
                 if write_space { try!(write!(f, "{}", d)) }
                 for t in ts.iter() {
@@ -190,5 +190,14 @@ fn it_works() {
     println!("{}", s);
     let mut substs = symbols.empty();
     println!("{}", s.inst(&mut substs, &mut symbols).unwrap());
+    //println!("{}", substs.look(&symbols.symbol("α").unwrap()));
+    if let Ty::Quant(_,MT::App(_,_,ref set)) = s {
+        println!("{}", set);
+    };
+    let x = UnionFind::new();
+    let y = UnionFind::new();
+    let z = UnionFind::new();
+    x.union(&y);
+    println!("{} {} {}", x.find() as *const _, y.find() as *const _, z.find() as *const _);
     println!("{}", s.free().map( |s| symbols.name(s) ).collect::<HashSet<_>>());
 }

@@ -61,7 +61,7 @@ impl<'a> Symbols<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Show)]
 pub struct Table<'a, T> {
     table: HashMap<S, T>,
 }
