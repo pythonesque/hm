@@ -1,5 +1,5 @@
 use std::collections::hash_map::{HashMap, Entry};
-use std::fmt::{self, Show};
+use std::fmt::{self, String};
 use std::num::Int;
 
 type S = u32;
@@ -34,11 +34,11 @@ impl<'a> Symbols<'a> {
     }
 
     /// Taking self is future proofing (if we need to shrink variable sizes).
-    pub fn name<'b,'c>(&'b self, symbol: &'c Symbol<'c>) -> Option<&'c str> {
+    pub fn name<'b,'c>(&'b self, symbol: &'c Symbol<'a>) -> Option<&'a str> {
         symbol.0
     }
 
-    pub fn fmt<'b,'c>(&'b self, f: &mut fmt::Formatter, symbol: &'c Symbol<'c>) -> fmt::Result {
+    pub fn fmt<'b,'c>(&'b self, f: &mut fmt::Formatter, symbol: &'c Symbol<'a>) -> fmt::Result {
         match *symbol {
             Symbol(Some(name),_) => name.fmt(f),
             Symbol(_,i) => i.fmt(f),
@@ -47,7 +47,7 @@ impl<'a> Symbols<'a> {
 
     pub fn symbol(&mut self, name: &'a str) -> Result<Symbol<'a>, ()> {
         let Symbols {ref mut symbols, ref mut next_sym } = *self;
-        Ok(match symbols.entry(&name) {
+        Ok(match symbols.entry(name) {
             Entry::Occupied(o) => Symbol(Some(name), *o.get()),
             Entry::Vacant(v) => Symbol(Some(name), *v.insert(try!(get_next_sym(next_sym)))),
         })

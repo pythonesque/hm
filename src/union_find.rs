@@ -1,6 +1,6 @@
 use std::cmp::{Ord, Ordering};
 use std::cell::Cell;
-use std::uint;
+use std::usize;
 use std::u8;
 
 /// Max rank of a k-element Union-Find tree with path compression is lg(k).
@@ -11,61 +11,79 @@ use std::u8;
 /// types to never overflow.  In theory we should constrain it so users can't specify their own
 /// types though.
 #[static_assert]
-static _NO_CHECKED_ADD_NEEDED: bool = uint::BITS <= u8::MAX as uint;
+static _NO_CHECKED_ADD_NEEDED: bool = usize::BITS <= u8::MAX as usize;
 
-/// Cannot implemenet Clone and retain correct semantics.
+/// Cannot implement Clone and retain correct semantics.
 #[derive(Show)]
-pub struct UnionFind<'a> {
-    parent: Cell<Option<&'a UnionFind<'a>>>,
+pub struct UnionFind<'a, T: ?Sized> where T: 'a {
+    parent: Cell<Option<&'a T>>,
     rank: Cell<u8>
 }
 
-impl<'a> PartialEq for UnionFind<'a> {
+impl<'a, T> PartialEq for UnionFind<'a, T> {
     fn eq(&self, other: &Self) -> bool {
         self as *const _ == other as *const _
     }
 }
 
-impl<'a> UnionFind<'a> {
-    pub fn new() -> UnionFind<'a> {
-        UnionFind {
-            parent: Cell::new(None),
-            rank: Cell::new(0)
-        }
-    }
+pub trait UnionFindable<'a> {
+    fn as_union_find<'b>(&'b self) -> &'b UnionFind<'a, Self>;
 
-    pub fn find(&'a self) -> &'a Self {
-        match self.parent.get() {
+    fn on_union(&'a self, parent: &'a Self);
+
+    fn find(&'a self) -> &'a Self {
+        let x = self.as_union_find();
+        match x.parent.get() {
             Some(p) => {
                 let p = p.find();
-                self.parent.set(Some(p));
+                x.parent.set(Some(p));
                 p
             },
             None => self
         }
     }
 
-    /// Sometimes this can be used instead of Clone
-    pub fn copy(&'a self) -> UnionFind<'a> {
+    fn union(&'a self, other: &'a Self) {
+        let root = self.find();
+        let oroot = other.find();
+        let xroot = root.as_union_find();
+        let yroot = oroot.as_union_find();
+        if xroot as *const _ == yroot as *const _ { return }
+        let rank = xroot.rank.get();
+        match rank.cmp(&yroot.rank.get()) {
+            Ordering::Less => {
+                xroot.parent.set(Some(oroot));
+                // We call on_union after setting the parent in case the implementor could somehow
+                // mess up the algorithmic bounds by running before it was done.
+                root.on_union(oroot);
+            },
+            Ordering::Greater => {
+                yroot.parent.set(Some(root));
+                oroot.on_union(root);
+            },
+            Ordering::Equal => {
+                yroot.parent.set(Some(root));
+                xroot.rank.set(rank + 1);
+                oroot.on_union(root);
+            }
+        }
+    }
+
+    /*/// Sometimes this can be used instead of Clone
+    fn copy_union_find(&'a self) -> UnionFind<'a, Self> {
         let new = UnionFind {
             parent: Cell::new(Some(self.find())),
             rank: Cell::new(0),
         };
         new
-    }
+    }*/
+}
 
-    pub fn union(&'a self, other: &'a Self) {
-        let root = self.find();
-        let oroot = other.find();
-        if root as *const _ == oroot as *const _ { return }
-        let rank = root.rank.get();
-        match rank.cmp(&oroot.rank.get()) {
-            Ordering::Less => root.parent.set(Some(oroot)),
-            Ordering::Greater => oroot.parent.set(Some(root)),
-            Ordering::Equal => {
-                oroot.parent.set(Some(root));
-                root.rank.set(rank + 1);
-            }
+impl<'a,T> UnionFind<'a, T> where T: UnionFindable<'a> + 'a {
+    pub fn new() -> Self {
+        UnionFind {
+            parent: Cell::new(None),
+            rank: Cell::new(0)
         }
     }
 }
