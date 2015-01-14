@@ -85,6 +85,10 @@ impl<'a, T> Table<'a, T> {
         self.table.insert(k.1, v)
     }
 
+    pub fn delete(&mut self, k: &Symbol<'a>) -> Option<T> {
+        self.table.remove(&k.1)
+    }
+
     pub fn look<'b,'c>(&'b self, k: &'c Symbol<'a>) -> Option<&'b T> {
         self.table.get(&k.1)
     }

@@ -26,17 +26,18 @@ impl<'a, T> PartialEq for UnionFind<'a, T> {
     }
 }
 
-pub trait UnionFindable<'a> {
+pub trait UnionFindable<'a>: 'a {
     fn copy<F>(&'a self, init: F) -> Self where Self: Sized, F: FnOnce(UnionFind<'a, Self>) -> Self {
         let oroot = self.find();
         let yroot = oroot.as_union_find();
+        println!("{}", yroot.rank.get());
         // We know we are rank 0, so we can always point to the parent.
         if yroot.rank.get() == 0 { yroot.rank.set(1) }
         let root = init(UnionFind {
             parent: Cell::new(Some(oroot)),
             rank: Cell::new(0)
         });
-        root.on_union(oroot);
+        //root.on_union(oroot);
         root
     }
 
@@ -44,19 +45,30 @@ pub trait UnionFindable<'a> {
 
     fn on_union<'b>(&'b self, parent: &'a Self);
 
-    fn find(&'a self) -> &'a Self {
+    fn find(&'a self) -> &Self {
+        println!("FIND");
         let x = self.as_union_find();
         match x.parent.get() {
             Some(p) => {
                 let p = p.find();
                 x.parent.set(Some(p));
+                //self.on_union(p);
                 p
             },
             None => self
         }
     }
 
+    fn find_immutable<'c>(&'c self) -> &'c Self where 'a: 'c {
+        let x = self.as_union_find();
+        match x.parent.get() {
+            Some(ref p) => p.find_immutable(),
+            None => self
+        }
+    }
+
     fn union(&'a self, other: &'a Self) {
+        println!("UNION");
         let root = self.find();
         let oroot = other.find();
         let xroot = root.as_union_find();
