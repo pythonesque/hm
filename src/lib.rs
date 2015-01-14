@@ -4,10 +4,12 @@ extern crate arena;
 
 use arena::TypedArena;
 
+use self::Exp as E;
 use self::MonoTyData as MT;
 
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::fmt;
 
 use symbol::{Symbol, Table, Symbols};
@@ -28,11 +30,12 @@ pub struct TyFun<'a> {
     pub arity: A,
 }
 
+#[derive(Show)]
 pub enum Exp<'a> {
     Var(Var<'a>),
     Abs(Var<'a>, Box<Exp<'a>>),
     App(Box<Exp<'a>>, Box<Exp<'a>>),
-    Let(Var<'a>, Box<Exp<'a>>),
+    Let(Var<'a>, Box<Exp<'a>>, Box<Exp<'a>>),
 }
 
 #[derive(Copy,Clone)]
@@ -51,14 +54,8 @@ pub enum Ty<'a,'b> {
     Quant(Vec<TyVar<'a>>, MonoTy<'a,'b>),
 }
 
-pub struct Ctx<'a> {
-    assumptions: Table<'a, Ty<'a,'a>>,
-}
-
-pub struct Judgment<'a> {
-    ctx: Ctx<'a>,
-    exp: Exp<'a>,
-    ty: Ty<'a,'a>,
+pub struct Ctx<'a, 'b> {
+    assumptions: Table<'b, Ty<'a,'b>>,
 }
 
 pub struct TyVarIter<'a, 'b>(Box<Iterator<Item=TyVar<'a>> + 'b>);
@@ -114,8 +111,8 @@ impl<'a,'b> fmt::Show for MonoTyData<'a,'b> where 'a: 'b {
     }
 }
 
-impl<'a,'b> MonoTy<'a,'b> {
-    fn copy(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
+impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
+    fn copy(&self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
         MonoTy {
             ty: Cell::new(match self.ty.get() {
                 MT::Var(a) => MT::Var(a),
@@ -123,18 +120,18 @@ impl<'a,'b> MonoTy<'a,'b> {
                                                                   .map( |t| t.copy(arena) )
                                                                   .collect()))
             }),
-            uf: UnionFind::new(),//self.copy_union_find(),
+            uf: UnionFind::new(),
         }
     }
 
-    pub fn free<'c: 'b>(&'c self) -> TyVarIter<'a,'c> {
+    pub fn free<'c>(&'c self) -> TyVarIter<'a,'c> {
         match self.ty.get() {
             MT::Var(a) => TyVarIter(Box::new(Some(a).into_iter())),
             MT::App(_, ts) => TyVarIter(Box::new(ts.iter().flat_map( |t| t.free() ))),
         }
     }
 
-    fn subst(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &'b Table<'a, MonoTy<'a,'b>>) -> MonoTy<'a,'b> {
+    fn subst(&self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &Table<'a, MonoTy<'a,'b>>) -> MonoTy<'a,'b> {
         match self.ty.get() {
             MT::Var(ref a) => substs.look(a).unwrap_or(self).copy(arena),
             MT::App(d, ref ts) => MonoTy {
@@ -156,6 +153,15 @@ impl<'a,'b> MonoTy<'a,'b> {
             _ => Ok(ta.union(tb)),
         }
     }
+
+    pub fn gen(&self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, ctx: &Ctx<'a,'b>) -> Ty<'a,'b> {
+        let mut set = self.free().collect::<HashSet<_>>();
+        for ref a in ctx.free() {
+            set.remove(a);
+        }
+        Ty::Quant(set.into_iter().collect(), self.copy(arena))
+    }
+
 }
 
 impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> {
@@ -163,7 +169,7 @@ impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> {
         &self.uf
     }
 
-    fn on_union(&'b self, parent: &'b Self) {
+    fn on_union<'c>(&'c self, parent: &'b Self) {
         let x = self.ty.get();
         let y = parent.ty.get();
         if let (MT::App(_,_), MT::Var(_)) = (x, y) {
@@ -174,24 +180,40 @@ impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> {
     }
 }
 
-impl<'a,'b> Ty<'a,'b> {
-    fn free<'c: 'b>(&'c self) -> TyVarIter<'a, 'c> {
+impl<'a,'b> Ty<'a,'b> where 'a: 'b {
+    fn free<'c>(&'c self) -> TyVarIter<'a, 'c> {
         match *self {
             Ty::Quant(ref a, ref t) =>
                 TyVarIter(Box::new(t.free().filter( move |&a_| !a.iter().any( |&a| a_ == a )))),
         }
     }
 
-    pub fn inst<'c>(&'b self, substs: &'b mut Table<'b, MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,()> {
+    pub fn inst<'c>(&'c self, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,()> {
         match *self {
             Ty::Quant(ref a, ref t) => {
+                let mut substs = symbols.empty();
                 for a in a.iter() {
                     substs.enter(a, MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
                 }
-                Ok(t.subst(arena, substs))
+                Ok(t.subst(arena, &mut substs))
             }
         }
     }
+
+    /*fn copy(&self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
+        match *self {
+            Ty::Quant(ref a, ref t) => {
+            }
+        MonoTy {
+            ty: Cell::new(match self.ty.get() {
+                MT::Var(a) => MT::Var(a),
+                MT::App(d, ts) => MT::App(d, &**arena.alloc(ts.iter()
+                                                                  .map( |t| t.copy(arena) )
+                                                                  .collect()))
+            }),
+            uf: UnionFind::new(),//self.copy_union_find(),
+        }
+    }*/
 }
 
 impl<'a,'b> fmt::Show for Ty<'a,'b> where 'a: 'b {
@@ -209,13 +231,50 @@ impl<'a,'b> fmt::Show for Ty<'a,'b> where 'a: 'b {
     }
 }
 
-impl<'a> Judgment<'a> {
-    //let sets = UnionFind::new();
+impl<'a,'b> Ctx<'a,'b> where 'a: 'b {
+    pub fn free<'c>(&'c self) -> TyVarIter<'a,'c> {
+        TyVarIter(Box::new(self.assumptions.values().flat_map( |s| s.free() )))
+    }
+
+}
+
+pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>, exp: &'c Exp<'a>, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>, ()> {
+    match *exp {
+        E::Var(ref x) => try!(ctx.assumptions.look(x).ok_or(())).inst(sym_arena, arena, symbols),
+        E::App(ref e0, ref e1) => {
+            let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
+            let fun: TyFun<'a> = fun;
+            let t0 = sym_arena.alloc(try!(hm(ctx, &**e0, sym_arena, arena, symbols)));
+            let t1 = try!(hm(ctx, &**e1, sym_arena, arena, symbols));
+            let t = MT::Var(try!(symbols.fresh()));
+            let args = arena.alloc(vec![t1, MonoTy { ty: Cell::new(t), uf: UnionFind::new() }]);
+            let app = sym_arena.alloc(MonoTy {
+                ty: Cell::new(MT::App(fun, &**args)),
+                uf: UnionFind::new(),
+            });
+            t0.unify(app).and(Ok(UnionFindable::copy(&args[1], move |:uf| MonoTy {
+                ty: Cell::new(t),
+                uf: uf,
+            })))
+        },
+        E::Abs(ref x, ref e) => {
+            let t = MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() };
+            // TODO: Alpha substitution etc.
+            ctx.assumptions.enter(x, Ty::Quant(vec![], t));
+            hm(ctx, &**e, sym_arena, arena, symbols)
+        },
+        E::Let(ref x, ref e0, ref e1) => {
+            let t = try!(hm(ctx, &**e0, sym_arena, arena, symbols));
+            let s = t.gen(arena, ctx);
+            // TODO: Alpha substitution etc.
+            ctx.assumptions.enter(x, s);
+            hm(ctx, &**e1, sym_arena, arena, symbols)
+        }
+    }
 }
 
 #[test]
 fn it_works() {
-    use std::collections::HashSet;
     let sym_arena = TypedArena::new();
     let arena = TypedArena::new();
     let mut symbols = Symbols::new();
@@ -235,11 +294,10 @@ fn it_works() {
         symbols.symbol("α").unwrap(),
     ], t);
     println!("{:?}", s);
-    let mut substs = symbols.empty();
-    let inst = s.inst(&mut substs, &arena, &mut symbols).unwrap();
-    println!("{:?}", inst.ty.get());
+    let inst = s.inst(&sym_arena, &arena, &mut symbols).unwrap();
     //println!("{:?}", substs.look(&symbols.symbol("α").unwrap()));
     {
+        println!("{:?}", inst.ty.get());
         let Ty::Quant(_, ref t) = s;
         println!("{:?}", t.uf);
 
@@ -258,4 +316,13 @@ fn it_works() {
         //println!("{:?} {:?} {:?}", x.find() as *const _, y.find() as *const _, z.find() as *const _);
         println!("{:?}", s.free().map( |ref s| symbols.name(s) ).collect::<HashSet<_>>());
     }
+    let exp = E::Let(
+        symbols.symbol("id").unwrap(),
+        Box::new(E::Abs(symbols.symbol("x").unwrap(), Box::new(E::Var(symbols.symbol("x").unwrap())))),
+        Box::new(E::Var(symbols.symbol("id").unwrap()))
+    );
+    println!("{:?}", exp);
+    let mut ctx = Ctx { assumptions: symbols.empty() };
+    let ty = hm(&mut ctx, &exp, &sym_arena, &arena, &mut symbols).unwrap();
+    println!("{:?}", ty);
 }

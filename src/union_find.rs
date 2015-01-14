@@ -27,9 +27,22 @@ impl<'a, T> PartialEq for UnionFind<'a, T> {
 }
 
 pub trait UnionFindable<'a> {
+    fn copy<F>(&'a self, init: F) -> Self where Self: Sized, F: FnOnce(UnionFind<'a, Self>) -> Self {
+        let oroot = self.find();
+        let yroot = oroot.as_union_find();
+        // We know we are rank 0, so we can always point to the parent.
+        if yroot.rank.get() == 0 { yroot.rank.set(1) }
+        let root = init(UnionFind {
+            parent: Cell::new(Some(oroot)),
+            rank: Cell::new(0)
+        });
+        root.on_union(oroot);
+        root
+    }
+
     fn as_union_find<'b>(&'b self) -> &'b UnionFind<'a, Self>;
 
-    fn on_union(&'a self, parent: &'a Self);
+    fn on_union<'b>(&'b self, parent: &'a Self);
 
     fn find(&'a self) -> &'a Self {
         let x = self.as_union_find();
@@ -62,9 +75,9 @@ pub trait UnionFindable<'a> {
                 oroot.on_union(root);
             },
             Ordering::Equal => {
-                yroot.parent.set(Some(root));
-                xroot.rank.set(rank + 1);
-                oroot.on_union(root);
+                xroot.parent.set(Some(oroot));
+                yroot.rank.set(rank + 1);
+                root.on_union(oroot);
             }
         }
     }

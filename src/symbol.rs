@@ -1,4 +1,4 @@
-use std::collections::hash_map::{HashMap, Entry};
+use std::collections::hash_map::{self, Entry, HashMap};
 use std::fmt::{self, String};
 use std::num::Int;
 
@@ -66,12 +66,30 @@ pub struct Table<'a, T> {
     table: HashMap<S, T>,
 }
 
+pub struct Values<'a, T>(hash_map::Values<'a, S, T>) where T: 'a;
+
+impl<'a, T> Iterator for Values<'a, T> where T: 'a {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
 impl<'a, T> Table<'a, T> {
-    pub fn enter(&mut self, k: &Symbol, v: T) -> Option<T> {
+    pub fn enter<'b>(&mut self, k: &'b Symbol<'a>, v: T) -> Option<T> {
         self.table.insert(k.1, v)
     }
 
     pub fn look<'b,'c>(&'b self, k: &'c Symbol<'a>) -> Option<&'b T> {
         self.table.get(&k.1)
+    }
+
+    pub fn values<'b>(&'b self) -> Values<'b,T> {
+        Values(self.table.values())
     }
 }
