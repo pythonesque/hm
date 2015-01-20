@@ -4,8 +4,10 @@ extern crate arena;
 
 use arena::TypedArena;
 
-use self::Exp as E;
+use exp::Exp as E;
 use self::MonoTyData as MT;
+use symbol::{Symbol, Table, Symbols};
+use union_find::{UnionFind, UnionFindable};
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -15,13 +17,9 @@ use std::fmt;
 use std::iter::repeat;
 #[cfg(feature = "debug")] use std::num::Int;
 
-use symbol::{Symbol, Table, Symbols};
-use union_find::{UnionFind, UnionFindable};
-
+pub mod exp;
 pub mod symbol;
 pub mod union_find;
-
-pub type Var<'a> = Symbol<'a>;
 
 pub type TyVar<'a> = Symbol<'a>;
 
@@ -29,15 +27,8 @@ pub type A = u8;
 
 #[derive(Clone,Copy,Eq,PartialEq)]
 pub struct TyFun<'a> {
-    pub name: Var<'a>,
+    pub name: Symbol<'a>,
     pub arity: A,
-}
-
-pub enum Exp<'a> {
-    Var(Var<'a>),
-    Abs(Var<'a>, Box<Exp<'a>>),
-    App(Box<Exp<'a>>, Box<Exp<'a>>),
-    Let(Var<'a>, Box<Exp<'a>>, Box<Exp<'a>>),
 }
 
 #[derive(Copy,Clone,PartialEq)]
@@ -71,27 +62,6 @@ pub struct Ctx<'a, 'b> where 'a: 'b {
 pub struct TyVarIter<'a, 'b>(Box<Iterator<Item=TyVar<'a>> + 'b>);
 
 pub type MonoTyCow<'a, 'b> = Cow<'b, MonoTy<'a,'b>, MonoTy<'a,'b>>;
-
-impl<'a> fmt::String for Exp<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            E::Var(ref x) => Symbols::new().fmt(f, x),
-            E::Abs(ref x, ref e) => {
-                try!(write!(f, "λ"));
-                try!(Symbols::new().fmt(f, x));
-                write!(f, ". {}", e)
-            },
-            E::App(ref e1, ref e2) => {
-                write!(f, "{} {}", e1, e2)
-            },
-            E::Let(ref x, ref e1, ref e2) => {
-                try!(write!(f, "let "));
-                try!(Symbols::new().fmt(f, x));
-                write!(f, " = {} in {}", e1, e2)
-            },
-        }
-    }
-}
 
 impl<'a, 'b> fmt::String for Ctx<'a, 'b> where 'a: 'b {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -298,7 +268,7 @@ impl<'a,'b> Ctx<'a,'b> where 'a: 'b {
 }
 
 pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
-                    exp: &'b Exp<'a>,
+                    exp: &'b E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, ()>
