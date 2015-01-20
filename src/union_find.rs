@@ -20,24 +20,17 @@ pub struct UnionFind<'a, T: ?Sized> where T: 'a {
     rank: Cell<u8>
 }
 
-impl<'a, T> PartialEq for UnionFind<'a, T> {
-    fn eq(&self, other: &Self) -> bool {
-        self as *const _ == other as *const _
-    }
-}
-
 pub trait UnionFindable<'a>: 'a {
     fn copy<F>(&'a self, init: F) -> Self where Self: Sized, F: FnOnce(UnionFind<'a, Self>) -> Self {
         let oroot = self.find();
         let yroot = oroot.as_union_find();
-        println!("{}", yroot.rank.get());
         // We know we are rank 0, so we can always point to the parent.
         if yroot.rank.get() == 0 { yroot.rank.set(1) }
         let root = init(UnionFind {
             parent: Cell::new(Some(oroot)),
             rank: Cell::new(0)
         });
-        //root.on_union(oroot);
+        root.on_union(oroot);
         root
     }
 
@@ -46,13 +39,11 @@ pub trait UnionFindable<'a>: 'a {
     fn on_union<'b>(&'b self, parent: &'a Self);
 
     fn find(&'a self) -> &Self {
-        println!("FIND");
         let x = self.as_union_find();
         match x.parent.get() {
             Some(p) => {
                 let p = p.find();
                 x.parent.set(Some(p));
-                //self.on_union(p);
                 p
             },
             None => self
@@ -68,7 +59,6 @@ pub trait UnionFindable<'a>: 'a {
     }
 
     fn union(&'a self, other: &'a Self) {
-        println!("UNION");
         let root = self.find();
         let oroot = other.find();
         let xroot = root.as_union_find();
@@ -93,15 +83,6 @@ pub trait UnionFindable<'a>: 'a {
             }
         }
     }
-
-    /*/// Sometimes this can be used instead of Clone
-    fn copy_union_find(&'a self) -> UnionFind<'a, Self> {
-        let new = UnionFind {
-            parent: Cell::new(Some(self.find())),
-            rank: Cell::new(0),
-        };
-        new
-    }*/
 }
 
 impl<'a,T> UnionFind<'a, T> where T: UnionFindable<'a> + 'a {

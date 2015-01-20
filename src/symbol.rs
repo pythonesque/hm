@@ -34,11 +34,11 @@ impl<'a> Symbols<'a> {
     }
 
     /// Taking self is future proofing (if we need to shrink variable sizes).
-    pub fn name<'b,'c>(&'b self, symbol: &'c Symbol<'a>) -> Option<&'a str> {
+    pub fn name(&self, symbol: &Symbol<'a>) -> Option<&'a str> {
         symbol.0
     }
 
-    pub fn fmt<'b,'c>(&'b self, f: &mut fmt::Formatter, symbol: &'c Symbol<'a>) -> fmt::Result {
+    pub fn fmt(&self, f: &mut fmt::Formatter, symbol: &Symbol<'a>) -> fmt::Result {
         match *symbol {
             Symbol(Some(name),_) => name.fmt(f),
             Symbol(_,i) => i.fmt(f),
@@ -61,7 +61,7 @@ impl<'a> Symbols<'a> {
     }
 }
 
-#[derive(Clone,Show)]
+#[derive(Clone)]
 pub struct Table<'a, T> {
     table: HashMap<S, T>,
 }
@@ -95,5 +95,26 @@ impl<'a, T> Table<'a, T> {
 
     pub fn values<'b>(&'b self) -> Values<'b,T> {
         Values(self.table.values())
+    }
+
+    pub fn fmt(&self, f: &mut fmt::Formatter, symbols: &Symbols<'a>) -> fmt::Result
+        where T: fmt::String
+    {
+        try!(write!(f, "{{"));
+        let mut iter = self.table.iter();
+        if let Some((i,v)) = iter.next() {
+            let reverse_map = symbols.symbols.iter()
+                                             .map( |(&i, &name)| (name, i) )
+                                             .collect::<HashMap<_,_>>();
+            let name = |&: i| Symbol(reverse_map.get(i).map( |&name| name ), *i);
+            try!(symbols.fmt(f, &name(i)));
+            try!(write!(f, ": {}", v));
+            for (i, v) in iter {
+                try!(write!(f, ", "));
+                try!(symbols.fmt(f, &name(i)));
+                try!(write!(f, ": {}", v));
+            }
+        }
+        write!(f, "}}")
     }
 }
