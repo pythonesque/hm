@@ -5,6 +5,7 @@ extern crate arena;
 use arena::TypedArena;
 
 use exp::Exp as E;
+pub use exp::parse::parse;
 use self::MonoTyData as MT;
 use symbol::{Symbol, Table, Symbols};
 use union_find::{UnionFind, UnionFindable};
@@ -343,6 +344,7 @@ pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
                 Some(v) => ctx.assumptions.enter(x, v),
                 None => ctx.assumptions.delete(x)
             };
+            ctx.indent(-2);
             res
         }
     };
@@ -422,27 +424,15 @@ fn it_works() {
     /*let exp = E::App(
         Box::new(E::Var(symbols.symbol("id").unwrap())),
         Box::new(E::Var(symbols.symbol("n").unwrap())));*/
-    let exp = E::Let(symbols.symbol("id").unwrap(),
-        Box::new(E::Abs(symbols.symbol("x").unwrap(),
-            Box::new(E::Var(symbols.symbol("x").unwrap()))
-            /*Box::new(E::App(
-                Box::new(E::Var(symbols.symbol("x").unwrap())),
-                Box::new(E::Var(symbols.symbol("x").unwrap()))))*/
-        )),
-        Box::new(E::App(
-            Box::new(E::Var(symbols.symbol("id").unwrap())),
-            Box::new(E::Var(symbols.symbol("n").unwrap()))),
-        ));
     let mut ctx = Ctx::new(assumptions, symbols);
+    let exp = parse("let id lambda x x in id n", &mut ctx.symbols).unwrap();
     let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
     assert_eq!(int, ty.find().ty.get());
 
-    let exp = E::Let(ctx.symbols.symbol("bar").unwrap(),
-        Box::new(E::Abs(ctx.symbols.symbol("x").unwrap(),
-            Box::new(E::Let(ctx.symbols.symbol("foo").unwrap(),
-                Box::new(E::Abs(ctx.symbols.symbol("y").unwrap(),
-                    Box::new(E::Var(ctx.symbols.symbol("x").unwrap())))),
-                Box::new(E::Var(ctx.symbols.symbol("foo").unwrap())))))),
-        Box::new(E::Var(ctx.symbols.symbol("bar").unwrap())));
+    let exp = parse("
+let bar lambda x
+    let foo lambda y x
+    in foo
+in bar", &mut ctx.symbols).unwrap();
     hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
 }
