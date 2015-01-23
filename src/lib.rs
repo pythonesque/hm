@@ -1,6 +1,7 @@
 #![allow(unstable)]
 
 extern crate arena;
+extern crate rustc;
 
 use arena::TypedArena;
 
@@ -168,12 +169,12 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn gen<'c>(&'b self, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, ctx: &Ctx<'a,'b,'c>) -> Ty<'a,'b> {
+    pub fn gen<'c>(&'b self, ctx: &Ctx<'a,'b,'c>) -> Ty<'a,'b> {
         let mut set = self.free().collect::<HashSet<_>>();
         for ref a in ctx.free() {
             set.remove(a);
         }
-        Ty::Quant(set.into_iter().collect(), sym_arena.alloc(self.copy(arena)))
+        Ty::Quant(set.into_iter().collect(), self)
     }
 
 }
@@ -204,12 +205,18 @@ impl<'a,'b> Ty<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn inst<'c>(&'c self, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,()> {
+    pub fn inst<'c>(&'c self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,()> where 'a: 'b {
         match *self {
             Ty::Quant(ref a, ref t) => {
                 let mut substs = symbols.empty();
+                let mut vec = Vec::with_capacity(a.len());
+                for _ in range(0, a.len()) {
+                    vec.push(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
+                }
+                let mut b = arena.alloc(vec).iter();;
                 for a in a.iter() {
-                    substs.enter(a, &*sym_arena.alloc(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() }));
+                    // Unwrap cannot fail here because we iterate in lockstep.
+                    substs.enter(a, b.next().unwrap());
                 }
                 Ok(t.subst(arena, &mut substs))
             }
@@ -269,7 +276,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
 }
 
 pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
-                    exp: &'b E<'a>,
+                    exp: &'c E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, ()>
@@ -278,10 +285,10 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
     Ctx::debug(|| {
         let indent = ctx.indent(2);
         print!("{}", repeat(' ').take(indent as usize).collect::<String>());
-        println!("{} ⊦ {}: ", ctx, exp);
+        println!("{} ⊦ {}: ", &*ctx, exp);
     });
     #[inline]
-    fn end<'a,'b,'c>(ctx: &mut Ctx<'a,'b,'c>, res: &MonoTy<'a,'b>) where 'a: 'b {
+    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, 'a: 'd, {
         Ctx::debug(|| {
             let indent = ctx.indent(-2);
             print!("{}", repeat(' ').take(indent as usize).collect::<String>());
@@ -291,7 +298,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
     let res = match *exp {
         E::Var(ref x) => {
             let res = try!(ctx.assumptions.look(x).ok_or(()))
-                .inst(sym_arena, arena, ctx.symbols);
+                .inst(arena, ctx.symbols);
             if let Ok(ref res) = res { end(ctx, res) }
             res
         },
@@ -336,7 +343,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
         },
         E::Let(ref x, ref e0, ref e1) => {
             let t = try!(hm(ctx, &**e0, sym_arena, arena));
-            let s = sym_arena.alloc(t).gen(sym_arena, arena, ctx);
+            let s = sym_arena.alloc(t).gen(ctx);
             // TODO: Alpha substitution etc.
             let old = ctx.assumptions.enter(x, s);
             let res = hm(ctx, &**e1, sym_arena, arena);
@@ -363,6 +370,32 @@ mod tests {
     use std::cell::Cell;
     use arena::TypedArena;
 
+    fn bench<'a,B,F>(mut b: B, mut symbols: Symbols<'a>, closure: F)
+        where F: for<'b,'c> Fn(Ctx<'a,'b,'c>, &'b TypedArena<MonoTy<'a,'b>>, &'b TypedArena<Vec<MonoTy<'a,'b>>>),
+              B: FnMut(&mut FnMut())
+    {
+        let int = TyFun { name: symbols.symbol("int").unwrap(), arity: 0 };
+        let boolean = TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 };
+        let n = symbols.symbol("n").unwrap();
+        let t = symbols.symbol("true").unwrap();
+        let f = symbols.symbol("false").unwrap();
+        b( &mut || {
+            let n_ty = MonoTy { ty: Cell::new(MT::App(int, &[])), uf: UnionFind::new() };
+            let t_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
+            let f_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
+            let assumptions = symbols.empty();
+            let mut ctx = Ctx::new(assumptions, &mut symbols);
+            let sym_arena: TypedArena<MonoTy> = TypedArena::new();
+            let arena: TypedArena<Vec<MonoTy>> = TypedArena::new();
+            ctx.assumptions.enter(&n, Ty::Quant(vec![], &n_ty));
+            ctx.assumptions.enter(&t, Ty::Quant(vec![], &t_ty));
+            ctx.assumptions.enter(&f, Ty::Quant(vec![], &f_ty));
+            closure(ctx, &sym_arena, &arena);//, sym_arena, arena)
+        });
+    }
+
+    static TRIVIAL: &'static str = r"n";
+
     static BINARY_PRODUCTS: &'static str = r"
 let () lambda r r in
 let prod lambda e1 lambda e2
@@ -377,66 +410,51 @@ let p prod n false in right p
 
     #[test]
     fn it_works() {
-        let sym_arena = TypedArena::new();
-        let arena = TypedArena::new();
-        let mut symbols = Symbols::new();
-        let mut assumptions = symbols.empty();
-        let int = MT::App(TyFun { name: symbols.symbol("int").unwrap(), arity: 0 }, &[]);
-        let boolean = MT::App(TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 }, &[]);
-        assumptions.enter(
-            &symbols.symbol("n").unwrap(),
-            Ty::Quant(vec![],
-                      sym_arena.alloc(MonoTy { ty: Cell::new(int), uf: UnionFind::new() })));
-        assumptions.enter(
-            &symbols.symbol("true").unwrap(),
-            Ty::Quant(vec![],
-                      sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-        assumptions.enter(
-            &symbols.symbol("false").unwrap(),
-            Ty::Quant(vec![],
-                      sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-        let mut ctx = Ctx::new(assumptions, &mut symbols);
-        let exp = parse("let id lambda x x in id n", ctx.symbols).unwrap();
-        let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
-        assert_eq!(int, ty.find().ty.get());
 
-        let exp = parse("
+        let mut symbols = Symbols::new();
+        let int = TyFun { name: symbols.symbol("int").unwrap(), arity: 0 };
+        let bool = TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 };
+        let exp1 = parse("let id lambda x x in id n", &mut symbols).unwrap();
+        let exp2 = parse("
 let bar lambda x
     let foo lambda y x
     in foo
-in bar", ctx.symbols).unwrap();
-        hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+in bar", &mut symbols).unwrap();
+        let exp3 = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
+        bench(|t| t(), symbols, move |mut ctx, sym_arena, arena| {
+            let ty = hm(&mut ctx, &exp1, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
 
-        let exp = parse(BINARY_PRODUCTS, ctx.symbols).unwrap();
-        let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
-        assert_eq!(boolean, ty.find().ty.get());
+            hm(&mut ctx, &exp2, sym_arena, arena).unwrap();
+
+            let ty = hm(&mut ctx, &exp3, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
+        });
     }
 
     #[bench]
-    fn bench_hm(b: &mut test::Bencher) {
+    fn bench_trivial_hm(b: &mut test::Bencher) {
         let mut symbols = Symbols::new();
-        let exp = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
-        b.iter( move || {
-            let assumptions = symbols.empty();
-            let mut ctx = Ctx::new(assumptions, &mut symbols);
-            let sym_arena = TypedArena::new();
-            let arena = TypedArena::new();
-            let int = MT::App(TyFun { name: ctx.symbols.symbol("int").unwrap(), arity: 0 }, &[]);
-            let boolean = MT::App(TyFun { name: ctx.symbols.symbol("bool").unwrap(), arity: 0 }, &[]);
-            ctx.assumptions.enter(
-                &ctx.symbols.symbol("n").unwrap(),
-                Ty::Quant(vec![],
-                          sym_arena.alloc(MonoTy { ty: Cell::new(int), uf: UnionFind::new() })));
-            ctx.assumptions.enter(
-                &ctx.symbols.symbol("true").unwrap(),
-                Ty::Quant(vec![],
-                          sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-            ctx.assumptions.enter(
-                &ctx.symbols.symbol("false").unwrap(),
-                Ty::Quant(vec![],
-                          sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-            let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
-            assert_eq!(boolean, ty.find().ty.get());
-        })
+        let int = TyFun { name: symbols.symbol("int").unwrap(), arity: 0 };
+        let exp = parse(
+            TRIVIAL,
+            &mut symbols).unwrap();
+        bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
+            let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
+        });
+    }
+
+    #[bench]
+    fn bench_binary_products_hm(b: &mut test::Bencher) {
+        let mut symbols = Symbols::new();
+        let boolean = TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 };
+        let exp = parse(
+            BINARY_PRODUCTS,
+            &mut symbols).unwrap();
+        bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
+            let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(boolean, &[]), ty.find_immutable().ty.get());
+        });
     }
 }

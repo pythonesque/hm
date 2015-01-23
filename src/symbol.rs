@@ -1,3 +1,4 @@
+use rustc::util::nodemap::FnvHashMap;
 use std::collections::hash_map::{self, Entry, HashMap};
 use std::fmt::{self, String};
 use std::num::Int;
@@ -56,14 +57,14 @@ impl<'a> Symbols<'a> {
     /// Taking self is future proofing (if we need to shrink variable sizes).
     pub fn empty<'b, 'c, T>(&'b self) -> Table<'c, T> {
         Table {
-            table: HashMap::new(),
+            table: FnvHashMap::new(),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Table<'a, T> {
-    table: HashMap<S, T>,
+    table: FnvHashMap<S, T>,
 }
 
 pub struct Values<'a, T>(hash_map::Values<'a, S, T>) where T: 'a;
