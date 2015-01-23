@@ -91,66 +91,66 @@ pub mod parse {
         symbols.symbol(name).or_else( |_| err(ctx, EK::Symbol))
     }
 
-    fn parse_abs<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
+    fn parse_sym<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> Res<(Symbol<'a>, Ctx<'a>)> {
         let (tok, rest) = read_tok(ctx);
         match tok {
-            T::Ident(i) => {
-                let x = try!(sym(ctx, i, symbols));
-                let (e, rest) = try!(parse_exp(rest, symbols));
-                Ok((E::Abs(x, Box::new(e)), rest))
-            },
+            T::Ident(i) => Ok((try!(sym(ctx, i, symbols)), rest)),
             _ => err(ctx, EK::Parse)
         }
     }
 
-    fn parse_in<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>, x: Symbol<'a>, e1: E<'a>) -> PRes<'a> {
-        let (tok, rest) = read_tok(ctx);
-        match tok {
-            T::In => {
-                let (e2, rest) = try!(parse_exp(rest, symbols));
-                Ok((E::Let(x, Box::new(e1), Box::new(e2)), rest))
-            },
-            _ => err(ctx, EK::Parse)
-        }
+    fn parse_abs<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
+        let (x, rest) = try!(parse_sym(ctx, symbols));
+        let (e, rest) = try!(parse_exp(rest, symbols));
+        Ok((E::Abs(x, Box::new(e)), rest))
     }
 
     fn parse_let<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
-        let (tok, rest) = read_tok(ctx);
-        match tok {
-            T::Ident(i) => {
-                let x = try!(sym(ctx, i, symbols));
-                let (e1, rest) = try!(parse_exp(rest, symbols));
-                parse_in(rest, symbols, x, e1)
-            },
-            _ => err(ctx, EK::Parse)
-        }
+        let (x, rest) = try!(parse_sym(ctx, symbols));
+        let (e1, rest) = try!(parse_exp(rest, symbols));
+        let rest = match read_tok(rest) {
+            (T::In, rest) => rest,
+            _ => return err(rest, EK::Parse)
+        };
+        let (e2, rest) = try!(parse_exp(rest, symbols));
+        Ok((E::Let(x, Box::new(e1), Box::new(e2)), rest))
     }
 
-    fn parse_app<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>, e1: E<'a>) -> PRes<'a> {
-        let (tok, _) = read_tok(ctx);
-        match tok {
-            T::EOF | T::In => Ok((e1, ctx)),
-            _ => {
-                let (e2, rest) = try!(parse_exp(ctx, symbols));
-                Ok((E::App(Box::new(e1), Box::new(e2)), rest))
-            },
+    fn parse_app<'a>(mut ctx: Ctx<'a>, symbols: &mut Symbols<'a>, mut e1: E<'a>) -> PRes<'a> {
+        loop {
+            let (tok, rest) = read_tok(ctx);
+            let (e2, rest) = match tok {
+                T::EOF | T::In => return Ok((e1, ctx)),
+                T::Ident(i) => (E::Var(try!(sym(ctx, i, symbols))), rest),
+                T::Lambda => try!(parse_abs(rest, symbols)),
+                T::Let => try!(parse_let(rest, symbols)),
+            };
+            e1 = E::App(Box::new(e1), Box::new(e2));
+            ctx = rest;
         }
     }
 
     fn parse_exp<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
         let (tok, rest) = read_tok(ctx);
-        match tok {
-            T::Ident(i) => {
-                let e1 = E::Var(try!(sym(ctx, i, symbols)));
-                parse_app(rest, symbols, e1)
-            },
-            T::Lambda => parse_abs(rest, symbols),
-            T::Let => parse_let(rest, symbols),
-            _ => err(ctx, EK::Parse),
-        }
+        let (exp, rest) = match tok {
+            T::Ident(i) => (E::Var(try!(sym(ctx, i, symbols))), rest),
+            T::Lambda => try!(parse_abs(rest, symbols)),
+            T::Let => try!(parse_let(rest, symbols)),
+            _ => return err(ctx, EK::Parse),
+        };
+        parse_app(rest, symbols, exp)
+    }
+
+    fn parse_prog<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
+        parse_exp(ctx, symbols)
+            .and_then( |(exp,rest)| match read_tok(rest) {
+                (T::EOF, rest) => Ok((exp, rest)),
+                _ => err(rest, EK::Parse),
+            } )
     }
 
     pub fn parse<'a>(s: &'a str, symbols: &mut Symbols<'a>) -> Res<E<'a>> {
-        parse_exp(Ctx { s: s, pos: 0 }, symbols).map( |(exp,_)| exp )
+        parse_prog(Ctx { s: s, pos: 0 }, symbols)
+            .map( |(exp,_)| exp )
     }
 }

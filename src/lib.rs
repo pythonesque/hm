@@ -54,8 +54,8 @@ pub enum Ty<'a,'b> where 'a: 'b {
     Quant(Vec<TyVar<'a>>, &'b MonoTy<'a,'b>),
 }
 
-pub struct Ctx<'a, 'b> where 'a: 'b {
-    symbols: Symbols<'a>,
+pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+    symbols: &'c mut Symbols<'a>,
     assumptions: Table<'b, Ty<'a,'b>>,
     #[cfg(feature = "debug")] indent: u8,
 }
@@ -64,9 +64,9 @@ pub struct TyVarIter<'a, 'b>(Box<Iterator<Item=TyVar<'a>> + 'b>);
 
 pub type MonoTyCow<'a, 'b> = Cow<'b, MonoTy<'a,'b>, MonoTy<'a,'b>>;
 
-impl<'a, 'b> fmt::String for Ctx<'a, 'b> where 'a: 'b {
+impl<'a,'b,'c> fmt::String for Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.assumptions.fmt(f, &self.symbols)
+        self.assumptions.fmt(f, self.symbols)
     }
 }
 
@@ -101,7 +101,7 @@ impl<'a,'b> fmt::Show for MonoTyData<'a,'b> where 'a: 'b {
                 let mut write_space = !d.infix();
                 if write_space { try!(write!(f, "{:?}", d)) }
                 for t in ts.iter() {
-                    let t = &t.ty.get();
+                    let t = &t.find().ty.get();
                     if write_space { try!(write!(f, " ")) }
                     try!(match *t {
                         MT::Var(_) | MT::App(TyFun { arity: 0, .. }, _) =>
@@ -133,15 +133,15 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn free<'c>(&'c self) -> TyVarIter<'a,'c> {
-        match self.ty.get() {
+    pub fn free<'c>(&'b self) -> TyVarIter<'a,'c> where 'b: 'c {
+        match self.find().ty.get() {
             MT::Var(a) => TyVarIter(Box::new(Some(a).into_iter())),
             MT::App(_, ts) => TyVarIter(Box::new(ts.iter().flat_map( |t| t.free() ))),
         }
     }
 
     fn subst<'c>(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &'c Table<'a, &'b MonoTy<'a,'b>>) -> MonoTy<'a,'b> where 'a: 'c, 'b: 'c {
-        match self.ty.get() {
+        match self.find().ty.get() {
             MT::Var(ref a) => substs.look(a).unwrap_or(&self).copy(arena),
             MT::App(d, ref ts) => MonoTy {
                 ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
@@ -168,7 +168,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn gen(&'b self, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, ctx: &Ctx<'a,'b>) -> Ty<'a,'b> {
+    pub fn gen<'c>(&'b self, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, ctx: &Ctx<'a,'b,'c>) -> Ty<'a,'b> {
         let mut set = self.free().collect::<HashSet<_>>();
         for ref a in ctx.free() {
             set.remove(a);
@@ -220,21 +220,21 @@ impl<'a,'b> Ty<'a,'b> where 'a: 'b {
 impl<'a,'b> fmt::String for Ty<'a,'b> where 'a: 'b {
     fn fmt<'c,'d>(&'c self, f: &'d mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ty::Quant(ref a, &MonoTy { ref ty, ..}) => {
+            Ty::Quant(ref a, ref ty) => {
                 for a in a.iter() {
                     try!(write!(f, "∀ "));
                     try!(Symbols::new().fmt(f, a));
                     try!(write!(f, ". "))
                 }
-                write!(f, "{:?}", ty.get())
+                write!(f, "{:?}", ty.find().ty.get())
             },
         }
     }
 }
 
-impl<'a,'b> Ctx<'a,'b> where 'a: 'b {
+impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
     #[cfg(feature = "debug")]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: Symbols<'a>) -> Ctx<'a,'b> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
@@ -243,14 +243,14 @@ impl<'a,'b> Ctx<'a,'b> where 'a: 'b {
     }
 
     #[cfg(not(feature = "debug"))]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: Symbols<'a>) -> Ctx<'a,'b> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
         }
     }
 
-    pub fn free<'c>(&'c self) -> TyVarIter<'a,'c> {
+    pub fn free(&'c self) -> TyVarIter<'a,'c> {
         TyVarIter(Box::new(self.assumptions.values().flat_map( |s| s.free() )))
     }
 
@@ -268,12 +268,12 @@ impl<'a,'b> Ctx<'a,'b> where 'a: 'b {
     #[cfg(not(feature = "debug"))] #[inline] fn debug<T>(_: T) where T: FnOnce() {}
 }
 
-pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
+pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
                     exp: &'b E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, ()>
-    where 'a: 'b
+    where 'a: 'b, 'a: 'c, 'a: 'd,
 {
     Ctx::debug(|| {
         let indent = ctx.indent(2);
@@ -281,7 +281,7 @@ pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
         println!("{} ⊦ {}: ", ctx, exp);
     });
     #[inline]
-    fn end<'a,'b>(ctx: &mut Ctx<'a,'b>, res: &MonoTy<'a,'b>) where 'a: 'b {
+    fn end<'a,'b,'c>(ctx: &mut Ctx<'a,'b,'c>, res: &MonoTy<'a,'b>) where 'a: 'b {
         Ctx::debug(|| {
             let indent = ctx.indent(-2);
             print!("{}", repeat(' ').take(indent as usize).collect::<String>());
@@ -291,7 +291,7 @@ pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
     let res = match *exp {
         E::Var(ref x) => {
             let res = try!(ctx.assumptions.look(x).ok_or(()))
-                .inst(sym_arena, arena, &mut ctx.symbols);
+                .inst(sym_arena, arena, ctx.symbols);
             if let Ok(ref res) = res { end(ctx, res) }
             res
         },
@@ -351,88 +351,92 @@ pub fn hm<'a,'b,'c>(ctx: &'c mut Ctx<'a,'b>,
     res
 }
 
-#[test]
-fn it_works() {
-    let sym_arena = TypedArena::new();
-    let arena = TypedArena::new();
-    let mut symbols = Symbols::new();
-    //let fun = TyFun { name: symbols.symbol("→").unwrap(), arity: 2 };
-    /*let set = TyFun { name: symbols.symbol("Set").unwrap(), arity: 1 };
-    let t = MonoTy { ty: Cell::new(MT::App(fun, &**arena.alloc(vec![
-        MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: UnionFind::new() },
-        MonoTy { ty: Cell::new(MT::App(set, &**arena.alloc(vec![
-            MonoTy { ty: Cell::new(MT::App(fun, &**arena.alloc(vec![
-                MonoTy { ty: Cell::new(MT::Var(symbols.symbol("β").unwrap())), uf: UnionFind::new() },
-                MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: UnionFind::new() },
-            ]))), uf: UnionFind::new() },
-        ]))), uf: UnionFind::new() },
-    ]))), uf: UnionFind::new() };
-    let s = Ty::Quant(vec![
-        symbols.symbol("β").unwrap(),
-        symbols.symbol("α").unwrap(),
-    ], t);
-    println!("{:?}", s);
-    let inst = s.inst(&arena, &mut symbols).unwrap();
-    //println!("{:?}", substs.look(&symbols.symbol("α").unwrap()));
-    {
-        println!("{:?}", inst.ty.get());
-        let Ty::Quant(_, ref t) = s;
-        println!("{:?}", t.uf);
+#[cfg(test)]
+mod tests {
+    extern crate test;
 
-        //let x = sym_arena.alloc(MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: UnionFind::new() });
-        //let y = sym_arena.alloc(MonoTy { ty: Cell::new(MT::Var(symbols.symbol("β").unwrap())), uf: UnionFind::new() });
-        let z = sym_arena.alloc(MonoTy { ty: Cell::new(MT::Var(symbols.symbol("a").unwrap())), uf: UnionFind::new() });
+    use super::{Ctx, hm, MonoTy, parse, Ty, TyFun};
+    use super::MonoTyData as MT;
+    use symbol::Symbols;
+    use union_find::{UnionFind, UnionFindable};
 
-        //let arena = TypedArena::new();
-        //let t = t.copy(&arena);
-        /*x.union(y);
-        z.union(x);
-        z.union(t);*/
-        z.unify(&inst).unwrap();
-        println!("{:?}", z.find().ty.get());
-        println!("{:?}", inst.find().ty.get());
-        //println!("{:?} {:?} {:?}", x.find() as *const _, y.find() as *const _, z.find() as *const _);
-        println!("{:?}", s.free().map( |ref s| symbols.name(s) ).collect::<HashSet<_>>());
-    }*/
-    let mut assumptions = symbols.empty();
-    let int = MT::App(TyFun { name: symbols.symbol("int").unwrap(), arity: 0 }, &[]);
-    let boolean = MT::App(TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 }, &[]);
-    assumptions.enter(
-        &symbols.symbol("n").unwrap(),
-        Ty::Quant(vec![],
-                  sym_arena.alloc(MonoTy { ty: Cell::new(int), uf: UnionFind::new() })));
-    assumptions.enter(
-        &symbols.symbol("true").unwrap(),
-        Ty::Quant(vec![],
-                  sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-    assumptions.enter(
-        &symbols.symbol("false").unwrap(),
-        Ty::Quant(vec![],
-                  sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
-    //let a = MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: UnionFind::new() };
-    /*assumptions.enter(
-        &symbols.symbol("id").unwrap(),
-        Ty::Quant(vec![symbols.symbol("α").unwrap()],
-            MonoTy {
-                ty: Cell::new(MT::App(fun, &**arena.alloc(vec![
-                    UnionFindable::copy(&a, |uf|
-                        MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: uf }),
-                    UnionFindable::copy(&a, |uf|
-                        MonoTy { ty: Cell::new(MT::Var(symbols.symbol("α").unwrap())), uf: uf })
-                ]))),
-                uf: UnionFind::new() }));*/
-    /*let exp = E::App(
-        Box::new(E::Var(symbols.symbol("id").unwrap())),
-        Box::new(E::Var(symbols.symbol("n").unwrap())));*/
-    let mut ctx = Ctx::new(assumptions, symbols);
-    let exp = parse("let id lambda x x in id n", &mut ctx.symbols).unwrap();
-    let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
-    assert_eq!(int, ty.find().ty.get());
+    use std::cell::Cell;
+    use arena::TypedArena;
 
-    let exp = parse("
+    static BINARY_PRODUCTS: &'static str = r"
+let () lambda r r in
+let prod lambda e1 lambda e2
+    lambda x x e1 e2 in
+let left lambda e
+    e lambda x lambda y x in
+let right lambda e
+    e lambda x lambda y y in
+
+let p prod n false in right p
+";
+
+    #[test]
+    fn it_works() {
+        let sym_arena = TypedArena::new();
+        let arena = TypedArena::new();
+        let mut symbols = Symbols::new();
+        let mut assumptions = symbols.empty();
+        let int = MT::App(TyFun { name: symbols.symbol("int").unwrap(), arity: 0 }, &[]);
+        let boolean = MT::App(TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 }, &[]);
+        assumptions.enter(
+            &symbols.symbol("n").unwrap(),
+            Ty::Quant(vec![],
+                      sym_arena.alloc(MonoTy { ty: Cell::new(int), uf: UnionFind::new() })));
+        assumptions.enter(
+            &symbols.symbol("true").unwrap(),
+            Ty::Quant(vec![],
+                      sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
+        assumptions.enter(
+            &symbols.symbol("false").unwrap(),
+            Ty::Quant(vec![],
+                      sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
+        let mut ctx = Ctx::new(assumptions, &mut symbols);
+        let exp = parse("let id lambda x x in id n", ctx.symbols).unwrap();
+        let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+        assert_eq!(int, ty.find().ty.get());
+
+        let exp = parse("
 let bar lambda x
     let foo lambda y x
     in foo
-in bar", &mut ctx.symbols).unwrap();
-    hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+in bar", ctx.symbols).unwrap();
+        hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+
+        let exp = parse(BINARY_PRODUCTS, ctx.symbols).unwrap();
+        let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+        assert_eq!(boolean, ty.find().ty.get());
+    }
+
+    #[bench]
+    fn bench_hm(b: &mut test::Bencher) {
+        let mut symbols = Symbols::new();
+        let exp = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
+        b.iter( move || {
+            let assumptions = symbols.empty();
+            let mut ctx = Ctx::new(assumptions, &mut symbols);
+            let sym_arena = TypedArena::new();
+            let arena = TypedArena::new();
+            let int = MT::App(TyFun { name: ctx.symbols.symbol("int").unwrap(), arity: 0 }, &[]);
+            let boolean = MT::App(TyFun { name: ctx.symbols.symbol("bool").unwrap(), arity: 0 }, &[]);
+            ctx.assumptions.enter(
+                &ctx.symbols.symbol("n").unwrap(),
+                Ty::Quant(vec![],
+                          sym_arena.alloc(MonoTy { ty: Cell::new(int), uf: UnionFind::new() })));
+            ctx.assumptions.enter(
+                &ctx.symbols.symbol("true").unwrap(),
+                Ty::Quant(vec![],
+                          sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
+            ctx.assumptions.enter(
+                &ctx.symbols.symbol("false").unwrap(),
+                Ty::Quant(vec![],
+                          sym_arena.alloc(MonoTy { ty: Cell::new(boolean), uf: UnionFind::new() })));
+            let ty = hm(&mut ctx, &exp, &sym_arena, &arena).unwrap();
+            assert_eq!(boolean, ty.find().ty.get());
+        })
+    }
 }
