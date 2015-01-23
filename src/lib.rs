@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 #[cfg(feature = "debug")] use std::cmp;
 use std::collections::HashSet;
+use std::error::FromError;
 use std::fmt;
 use std::iter::repeat;
 #[cfg(feature = "debug")] use std::num::Int;
@@ -39,7 +40,7 @@ pub enum MonoTyData<'a, 'b> where 'a: 'b {
     App(TyFun<'a>, &'b [MonoTy<'a,'b>]),
 }
 
-#[derive(Show)]
+#[derive(Debug)]
 pub struct MonoTy<'a,'b> where 'a: 'b {
     uf: UnionFind<'b, MonoTy<'a,'b>>,
     ty: Cell<MonoTyData<'a, 'b>>,
@@ -55,6 +56,23 @@ pub enum Ty<'a,'b> where 'a: 'b {
     Quant(Vec<TyVar<'a>>, &'b MonoTy<'a,'b>),
 }
 
+// FIXME: Construct a proper error type.
+#[allow(missing_copy_implementations)]
+pub struct Error;
+
+impl FromError<symbol::Error> for Error {
+    fn from_error(_: symbol::Error) -> Self {
+        Error
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Inference failure.")
+    }
+}
+
+
 pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     symbols: &'c mut Symbols<'a>,
     assumptions: Table<'b, Ty<'a,'b>>,
@@ -65,7 +83,7 @@ pub struct TyVarIter<'a, 'b>(Box<Iterator<Item=TyVar<'a>> + 'b>);
 
 pub type MonoTyCow<'a, 'b> = Cow<'b, MonoTy<'a,'b>, MonoTy<'a,'b>>;
 
-impl<'a,'b,'c> fmt::String for Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.assumptions.fmt(f, self.symbols)
     }
@@ -88,13 +106,13 @@ impl <'a> TyFun<'a> {
     }
 }
 
-impl<'a> fmt::Show for TyFun<'a> {
+impl<'a> fmt::Debug for TyFun<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Symbols::new().fmt(f, &self.name)
     }
 }
 
-impl<'a,'b> fmt::Show for MonoTyData<'a,'b> where 'a: 'b {
+impl<'a,'b> fmt::Debug for MonoTyData<'a,'b> where 'a: 'b {
     fn fmt<'c, 'd>(&'c self, f: &'d mut fmt::Formatter) -> fmt::Result {
         match *self {
             MT::Var(ref a) => Symbols::new().fmt(f,a),
@@ -153,7 +171,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn unify(&'b self, other: &'b MonoTy<'a,'b>) -> Result<(), ()> {
+    pub fn unify(&'b self, other: &'b MonoTy<'a,'b>) -> Result<(), Error> {
         let ta = self.find();
         let tb = other.find();
         //println!("UNIFY: {:?} , {:?}", ta, tb);
@@ -164,7 +182,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
                 }
                 Ok(())
             },
-            (MT::App(_,_), MT::App(_,_)) => Err(()),
+            (MT::App(_,_), MT::App(_,_)) => Err(Error),
             _ => Ok(ta.union(tb)),
         }
     }
@@ -205,7 +223,7 @@ impl<'a,'b> Ty<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn inst<'c>(&'c self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,()> where 'a: 'b {
+    pub fn inst<'c>(&'c self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,symbol::Error> where 'a: 'b {
         match *self {
             Ty::Quant(ref a, ref t) => {
                 let mut substs = symbols.empty();
@@ -224,7 +242,7 @@ impl<'a,'b> Ty<'a,'b> where 'a: 'b {
     }
 }
 
-impl<'a,'b> fmt::String for Ty<'a,'b> where 'a: 'b {
+impl<'a,'b> fmt::Display for Ty<'a,'b> where 'a: 'b {
     fn fmt<'c,'d>(&'c self, f: &'d mut fmt::Formatter) -> fmt::Result {
         match *self {
             Ty::Quant(ref a, ref ty) => {
@@ -241,7 +259,7 @@ impl<'a,'b> fmt::String for Ty<'a,'b> where 'a: 'b {
 
 impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
     #[cfg(feature = "debug")]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
@@ -250,7 +268,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
     }
 
     #[cfg(not(feature = "debug"))]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
@@ -279,7 +297,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
                     exp: &'c E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
-                   ) -> Result<MonoTy<'a,'b>, ()>
+                   ) -> Result<MonoTy<'a,'b>, Error>
     where 'a: 'b, 'a: 'c, 'a: 'd,
 {
     Ctx::debug(|| {
@@ -288,18 +306,19 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
         println!("{} ⊦ {}: ", &*ctx, exp);
     });
     #[inline]
-    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, 'a: 'd, {
+    fn end<'a,'b,'c>(ctx: &mut Ctx<'a,'b,'c>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, {
         Ctx::debug(|| {
             let indent = ctx.indent(-2);
             print!("{}", repeat(' ').take(indent as usize).collect::<String>());
             println!("{:?}", res.find_immutable().ty.get() );
         })
     }
-    let res = match *exp {
+    Ok(match *exp {
         E::Var(ref x) => {
-            let res = try!(ctx.assumptions.look(x).ok_or(()))
-                .inst(arena, ctx.symbols);
-            if let Ok(ref res) = res { end(ctx, res) }
+            let res = try!(try!(ctx.assumptions.look(x)
+                           .ok_or(Error))
+                           .inst(arena, ctx.symbols));
+            end(ctx, &res);
             res
         },
         E::App(ref e0, ref e1) => {
@@ -318,7 +337,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
                 uf: uf,
             });
             end(ctx, &res);
-            Ok(res)
+            res
         },
         E::Abs(ref x, ref e) => {
             let fun = TyFun { name: try!(ctx.symbols.symbol("→")), arity: 2 };
@@ -339,14 +358,14 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
                 uf: UnionFind::new(),
             };
             end(ctx, &app);
-            Ok(app)
+            app
         },
         E::Let(ref x, ref e0, ref e1) => {
             let t = try!(hm(ctx, &**e0, sym_arena, arena));
             let s = sym_arena.alloc(t).gen(ctx);
             // TODO: Alpha substitution etc.
             let old = ctx.assumptions.enter(x, s);
-            let res = hm(ctx, &**e1, sym_arena, arena);
+            let res = try!(hm(ctx, &**e1, sym_arena, arena));
             match old {
                 Some(v) => ctx.assumptions.enter(x, v),
                 None => ctx.assumptions.delete(x)
@@ -354,8 +373,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
             ctx.indent(-2);
             res
         }
-    };
-    res
+    })
 }
 
 #[cfg(test)]

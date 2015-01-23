@@ -12,7 +12,7 @@ pub enum Exp<'a> {
     Let(Var<'a>, Box<Exp<'a>>, Box<Exp<'a>>),
 }
 
-impl<'a> fmt::String for Exp<'a> {
+impl<'a> fmt::Display for Exp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             E::Var(ref x) => Symbols::new().fmt(f, x),
@@ -39,7 +39,9 @@ pub mod parse {
     use super::Exp as E;
     use symbol::{Symbol, Symbols};
 
-    #[derive(Show)]
+    use std::fmt;
+
+    #[derive(Debug)]
     enum Tok<'a> {
         Ident(&'a str),
         Lambda,
@@ -48,19 +50,25 @@ pub mod parse {
         EOF,
     }
 
-    #[derive(Copy,Show)]
+    #[derive(Copy,Debug)]
     pub struct Error {
         pub pos: usize,
         pub kind: ErrorKind,
     }
 
-    #[derive(Copy,Show)]
+    #[derive(Copy,Debug)]
     pub enum ErrorKind {
         Parse,
         Symbol,
     }
 
     pub type Res<T> = Result<T, Error>;
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Inference failure.")
+        }
+    }
 
     fn read_tok<'a>(ctx: Ctx<'a>) -> (Tok<'a>, Ctx<'a>) {
         let s = ctx.s.trim_left();

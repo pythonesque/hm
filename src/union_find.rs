@@ -13,8 +13,8 @@ use std::u8;
 #[static_assert]
 static _NO_CHECKED_ADD_NEEDED: bool = usize::BITS <= u8::MAX as usize;
 
-/// Cannot implement Clone and retain correct semantics.
-#[derive(Show)]
+// Cannot implement Clone and retain correct semantics.
+#[derive(Debug)]
 pub struct UnionFind<'a, T: ?Sized> where T: 'a {
     parent: Cell<Option<&'a T>>,
     rank: Cell<u8>

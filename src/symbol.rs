@@ -1,23 +1,35 @@
 use rustc::util::nodemap::FnvHashMap;
 use std::collections::hash_map::{self, Entry, HashMap};
-use std::fmt::{self, String};
+use std::default::Default;
+#[allow(unused_imports)] use std::hash::Hasher;
+use std::fmt::{self, Display};
 use std::num::Int;
 
 type S = u32;
 
-#[derive(Copy,Clone,Eq,Hash,Show,PartialEq)]
+// FIXME: Create a proper error type.
+#[allow(missing_copy_implementations)]
+pub struct Error;
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Could not generate a new unique symbol, because the symbol table limit ({}) was reached.", <S as Int>::max_value())
+    }
+}
+
+#[derive(Copy,Clone,Debug,Eq,Hash,PartialEq)]
 pub struct Symbol<'a>(Option<&'a str>, S);
 
 pub struct Symbols<'a> {
     next_sym: S,
-    symbols: HashMap<&'a str, S>,
+    symbols: FnvHashMap<&'a str, S>,
 }
 
-fn get_next_sym(next_sym: &mut S) -> Result<S,()> {
+fn get_next_sym(next_sym: &mut S) -> Result<S,Error> {
     let i = *next_sym;
     *next_sym = match i.checked_add(Int::one()) {
         Some(i) => i,
-        None => return Err(())
+        None => return Err(Error)
     };
     Ok(i)
 }
@@ -26,15 +38,15 @@ impl<'a> Symbols<'a> {
     pub fn new() -> Symbols<'a> {
         Symbols {
             next_sym: 0,
-            symbols: HashMap::new(),
+            symbols: Default::default(),
         }
     }
 
-    pub fn fresh(&mut self) -> Result<Symbol<'a>, ()> {
+    pub fn fresh(&mut self) -> Result<Symbol<'a>, Error> {
         Ok(Symbol(None, try!(get_next_sym(&mut self.next_sym))))
     }
 
-    /// Taking self is future proofing (if we need to shrink variable sizes).
+    // Taking self is future proofing (if we need to shrink variable sizes).
     pub fn name(&self, symbol: &Symbol<'a>) -> Option<&'a str> {
         symbol.0
     }
@@ -46,7 +58,7 @@ impl<'a> Symbols<'a> {
         }
     }
 
-    pub fn symbol(&mut self, name: &'a str) -> Result<Symbol<'a>, ()> {
+    pub fn symbol(&mut self, name: &'a str) -> Result<Symbol<'a>, Error> {
         let Symbols {ref mut symbols, ref mut next_sym } = *self;
         Ok(match symbols.entry(name) {
             Entry::Occupied(o) => Symbol(Some(name), *o.get()),
@@ -54,10 +66,10 @@ impl<'a> Symbols<'a> {
         })
     }
 
-    /// Taking self is future proofing (if we need to shrink variable sizes).
+    // Taking self is future proofing (if we need to shrink variable sizes).
     pub fn empty<'b, 'c, T>(&'b self) -> Table<'c, T> {
         Table {
-            table: FnvHashMap::new(),
+            table: Default::default(),
         }
     }
 }
@@ -99,7 +111,7 @@ impl<'a, T> Table<'a, T> {
     }
 
     pub fn fmt(&self, f: &mut fmt::Formatter, symbols: &Symbols<'a>) -> fmt::Result
-        where T: fmt::String
+        where T: fmt::Display
     {
         try!(write!(f, "{{"));
         let mut iter = self.table.iter();
