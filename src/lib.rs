@@ -231,7 +231,7 @@ impl<'a,'b> Ty<'a,'b> where 'a: 'b {
                 for _ in range(0, a.len()) {
                     vec.push(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
                 }
-                let mut b = arena.alloc(vec).iter();;
+                let mut b = arena.alloc(vec).iter();
                 for a in a.iter() {
                     // Unwrap cannot fail here because we iterate in lockstep.
                     substs.enter(a, b.next().unwrap());
@@ -257,9 +257,9 @@ impl<'a,'b> fmt::Display for Ty<'a,'b> where 'a: 'b {
     }
 }
 
-impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
+impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(feature = "debug")]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
@@ -268,7 +268,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
     }
 
     #[cfg(not(feature = "debug"))]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Ctx<'a,'b,'c> {
         Ctx {
             assumptions: assumptions,
             symbols: symbols,
@@ -294,7 +294,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b {
 }
 
 pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
-                    exp: &'c E<'a>,
+                    exp: &E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, Error>
@@ -306,7 +306,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
         println!("{} ⊦ {}: ", &*ctx, exp);
     });
     #[inline]
-    fn end<'a,'b,'c>(ctx: &mut Ctx<'a,'b,'c>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, {
+    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, 'a: 'd {
         Ctx::debug(|| {
             let indent = ctx.indent(-2);
             print!("{}", repeat(' ').take(indent as usize).collect::<String>());
