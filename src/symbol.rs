@@ -1,4 +1,5 @@
 use rustc::util::nodemap::FnvHashMap;
+use std::cmp::Ordering;
 use std::collections::hash_map::{self, Entry, HashMap};
 use std::default::Default;
 #[allow(unused_imports)] use std::hash::Hasher;
@@ -17,8 +18,29 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Copy,Clone,Debug,Eq,Hash,PartialEq)]
+#[derive(Copy,Clone,Debug,Eq)]
 pub struct Symbol<'a>(Option<&'a str>, S);
+
+impl<'a> PartialEq for Symbol<'a> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.1.eq(&other.1)
+    }
+}
+
+impl<'a> PartialOrd for Symbol<'a> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.1.partial_cmp(&other.1)
+    }
+}
+
+impl<'a> Ord for Symbol<'a> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.1.cmp(&other.1)
+    }
+}
 
 pub struct Symbols<'a> {
     next_sym: S,

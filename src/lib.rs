@@ -14,7 +14,6 @@ use union_find::{UnionFind, UnionFindable};
 use std::borrow::Cow;
 use std::cell::Cell;
 #[cfg(feature = "debug")] use std::cmp;
-use std::collections::HashSet;
 use std::error::FromError;
 use std::fmt;
 use std::iter::repeat;
@@ -22,7 +21,7 @@ use std::iter::repeat;
 
 pub mod exp;
 pub mod symbol;
-pub mod union_find;
+mod union_find;
 
 pub type TyVar<'a> = Symbol<'a>;
 
@@ -79,21 +78,11 @@ pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(feature = "debug")] indent: u8,
 }
 
-pub struct TyVarIter<'a, 'b>(Box<Iterator<Item=TyVar<'a>> + 'b>);
-
 pub type MonoTyCow<'a, 'b> = Cow<'b, MonoTy<'a,'b>, MonoTy<'a,'b>>;
 
 impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.assumptions.fmt(f, self.symbols)
-    }
-}
-
-impl<'a: 'b, 'b> Iterator for TyVarIter<'a, 'b> {
-    type Item = TyVar<'a>;
-
-    fn next(&mut self) -> Option<TyVar<'a>> {
-        self.0.next()
     }
 }
 
@@ -142,7 +131,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
     fn copy(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
         match self.ty.get() {
             MT::Var(a) =>
-                UnionFindable::copy(self, |:uf| MonoTy { ty: Cell::new(MT::Var(a)), uf: uf }),
+                UnionFindable::copy(self, |uf| MonoTy { ty: Cell::new(MT::Var(a)), uf: uf }),
             MT::App(d, ts) => MonoTy {
                 ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
                                                           .map( |t| t.copy(arena) )
@@ -152,10 +141,13 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn free<'c>(&'b self) -> TyVarIter<'a,'c> where 'b: 'c {
+    // Early return if closure (which is a filter) returns true
+    fn free<'c, F>(&'b self, f: &'c mut F) -> bool where 'b: 'c, 'a: 'c, F: FnMut(TyVar<'a>) -> bool {
         match self.find().ty.get() {
-            MT::Var(a) => TyVarIter(Box::new(Some(a).into_iter())),
-            MT::App(_, ts) => TyVarIter(Box::new(ts.iter().flat_map( |t| t.free() ))),
+            MT::Var(a) => f(a),
+            MT::App(_, ts) => {
+                ts.iter().any( |t| t.free(f) )
+            }
         }
     }
 
@@ -187,17 +179,26 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    pub fn gen<'c>(&'b self, ctx: &Ctx<'a,'b,'c>) -> Ty<'a,'b> {
-        let mut set = self.free().collect::<HashSet<_>>();
-        for ref a in ctx.free() {
-            set.remove(a);
-        }
-        Ty::Quant(set.into_iter().collect(), self)
+    pub fn gen<'c>(&'b self, ctx: &Ctx<'a,'b,'c>, sym_arena: &'b TypedArena<MonoTy<'a,'b>>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> Ty<'a,'b> {
+        //let mut set = self.free().collect::<Vec<_>>();
+        let mut set = Vec::new();
+        let ty = sym_arena.alloc(self.copy(arena));
+        ty.free( &mut |a| {
+            // Want TyVars that are part of our type, but free in the context.
+            if !ctx.free( &mut move |b| a == b ) {
+                // Type is not bound in any context, yay
+                set.push(a);
+            }
+            false // Never short-circuit.
+        });
+        set.sort();
+        set.dedup();
+        Ty::Quant(set, ty)
     }
-
 }
 
 impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> where 'a: 'b {
+    #[inline]
     fn as_union_find<'c>(&'c self) -> &'c UnionFind<'b, Self> {
         &self.uf
     }
@@ -216,10 +217,14 @@ impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> where 'a: 'b {
 }
 
 impl<'a,'b> Ty<'a,'b> where 'a: 'b {
-    fn free<'c>(&'c self) -> TyVarIter<'a, 'c> {
+    fn free<'c, F>(&'c self, f: &'c mut F) -> bool where F: FnMut(TyVar<'a>) -> bool {
         match *self {
-            Ty::Quant(ref a, ref t) =>
-                TyVarIter(Box::new(t.free().filter( move |&a_| !a.iter().any( |&a| a_ == a )))),
+            Ty::Quant(ref a, ref t) => t.free(&mut |a_| {
+                // Want TyVars that are free in t but aren't included in our quantifiers.
+                if a.iter().any( |&a| a_ == a ) { return true }
+                // Now we know that this is the case, so run the function.
+                f(a_)
+            })
         }
     }
 
@@ -275,8 +280,8 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
         }
     }
 
-    pub fn free(&'c self) -> TyVarIter<'a,'c> {
-        TyVarIter(Box::new(self.assumptions.values().flat_map( |s| s.free() )))
+    fn free<F>(&'c self, f: &'c mut F) -> bool where F: FnMut(TyVar<'a>) -> bool {
+        self.assumptions.values().any( |s| s.free(f) )
     }
 
     #[cfg(feature = "debug")] fn indent(&mut self, delta: i8) -> u8 {
@@ -332,7 +337,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
                 uf: UnionFind::new(),
             });
             try!(t0.unify(app));
-            let res = UnionFindable::copy(&args[1], move |:uf| MonoTy {
+            let res = UnionFindable::copy(&args[1], move |uf| MonoTy {
                 ty: Cell::new(t),
                 uf: uf,
             });
@@ -362,7 +367,7 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
         },
         E::Let(ref x, ref e0, ref e1) => {
             let t = try!(hm(ctx, &**e0, sym_arena, arena));
-            let s = sym_arena.alloc(t).gen(ctx);
+            let s = sym_arena.alloc(t).gen(ctx, sym_arena, arena);
             // TODO: Alpha substitution etc.
             let old = ctx.assumptions.enter(x, s);
             let res = try!(hm(ctx, &**e1, sym_arena, arena));
@@ -423,7 +428,10 @@ let left lambda e
 let right lambda e
     e lambda x lambda y y in
 
-let p prod n false in right p
+let p prod n false in
+let x right p in
+let q prod false n in
+left p
 ";
 
     #[test]
