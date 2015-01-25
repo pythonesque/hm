@@ -157,8 +157,8 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
         }
     }
 
-    fn subst<'c>(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &'c Table<'a, &'b MonoTy<'a,'b>>) -> MonoTy<'a,'b> where 'a: 'c, 'b: 'c {
-        match self.find().ty.get() {
+    fn subst<'c>(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &'c Table<'a, &'b MonoTy<'a,'b>>) -> MonoTy<'a,'b> {
+        match self.ty.get() {
             MT::Var(ref a) => substs.look(a).unwrap_or(&self).copy(arena),
             MT::App(d, ref ts) => MonoTy {
                 ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
