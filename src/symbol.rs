@@ -2,8 +2,8 @@ use rustc::util::nodemap::FnvHashMap;
 use std::cmp::Ordering;
 use std::collections::hash_map::{self, Entry, HashMap};
 use std::default::Default;
-#[allow(unused_imports)] use std::hash::Hasher;
 use std::fmt::{self, Display};
+use std::hash::{Hash, Hasher, Writer};
 use std::num::Int;
 
 type S = u32;
@@ -20,6 +20,13 @@ impl fmt::Display for Error {
 
 #[derive(Copy,Clone,Debug,Eq)]
 pub struct Symbol<'a>(Option<&'a str>, S);
+
+impl<'a,H> Hash<H> for Symbol<'a> where H: Hasher + Writer {
+    #[inline]
+    fn hash(&self, state: &mut H) {
+        self.1.hash(state)
+    }
+}
 
 impl<'a> PartialEq for Symbol<'a> {
     #[inline]
