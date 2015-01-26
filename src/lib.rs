@@ -181,6 +181,11 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
                 Ok(())
             },
             (MT::App(_,_), MT::App(_,_)) => Err(Error),
+            (MT::App(_,ts), MT::Var(t)) | (MT::Var(t), MT::App(_, ts)) => {
+                // Occurs check
+                if ts.iter().any( |t_| t_.free( &mut |t_| t_ == t ) ) { return Err(Error) }
+                Ok(ta.union(tb))
+            },
             _ => Ok(ta.union(tb)),
         }
     }
@@ -308,12 +313,12 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
         false
     }
 
-    #[cfg(feature = "debug")] fn indent(&mut self, delta: i8) -> u8 {
+    #[cfg(feature = "debug")] fn indent<'d>(&'d mut self, delta: i8) -> u8 {
         let indent = self.indent;
         self.indent = (indent as i8).saturating_add(delta) as u8;
         cmp::max(cmp::min(indent, 80), 0)
     }
-    #[cfg(not(feature = "debug"))] #[inline] fn indent(&mut self, _: i8) -> u8 { 0 }
+    #[cfg(not(feature = "debug"))] #[inline] fn indent<'d>(&'d mut self, _: i8) -> u8 { 0 }
 
     #[cfg(feature = "debug")] fn debug<T>(t: T) where T: FnOnce() {
         t();
@@ -322,12 +327,12 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(not(feature = "debug"))] #[inline] fn debug<T>(_: T) where T: FnOnce() {}
 }
 
-pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
-                    exp: &'c E<'a>,
+pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
+                    exp: &'e E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, Error>
-    where 'a: 'b, 'a: 'c, 'a: 'd
+    where 'a: 'b, 'a: 'c, 'a: 'd, 'a: 'e,
 {
     Ctx::debug(|| {
         let indent = ctx.indent(2);
@@ -501,8 +506,8 @@ let f lambda f
 in f lambda x lambda y y
 ";
 
-    static TEST_FAILURE: &'static str = r"
-let foo lambda x lambda x x in
+    static OCCURS_CHECK: &'static str = r"
+let foo lambda x x x in
 foo
 ";
 
@@ -520,7 +525,7 @@ let bar lambda x
 in bar", &mut symbols).unwrap();
         let exp3 = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
         let exp4 = parse(BINARY_SUMS, &mut symbols).unwrap();
-        let exp5 = parse(TEST_FAILURE, &mut symbols).unwrap();
+        let exp5 = parse(OCCURS_CHECK, &mut symbols).unwrap();
         bench(|t| t(), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp1, sym_arena, arena).unwrap();
             assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
@@ -533,7 +538,7 @@ in bar", &mut symbols).unwrap();
             let ty = hm(&mut ctx, &exp4, sym_arena, arena).unwrap();
             assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
 
-            hm(&mut ctx, &exp5, sym_arena, arena).unwrap();
+            hm(&mut ctx, &exp5, sym_arena, arena).err().expect("Occurs check failed");
         });
     }
 
