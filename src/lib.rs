@@ -193,10 +193,12 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
             false
         } );
         ctx.free( &mut |b| {
-            for i in range(0, set.len()) {
+            let mut i = 0;
+            while i < set.len() {
                 if set[i] == b {
                     set.swap_remove(i);
                 }
+                i += 1;
             }
             false
         } );
@@ -321,11 +323,11 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
 }
 
 pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
-                    exp: &E<'a>,
+                    exp: &'c E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, Error>
-    where 'a: 'b, 'a: 'c, 'a: 'd, 'a: 'b
+    where 'a: 'b, 'a: 'c, 'a: 'd
 {
     Ctx::debug(|| {
         let indent = ctx.indent(2);
@@ -342,14 +344,18 @@ pub fn hm<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>,
     }
     Ok(match *exp {
         E::Var(ref x) => {
-            let res = {
-                // let Ctx { ref mut symbols, ref tys, ref mut cache, ref assumptions, .. } = *ctx;
-                // let i = cache.get(x);
-                // try!(tys[*try!(i.map_or_else( || assumptions.look(x).ok_or(Error), |x| Ok(x) ))]
-                //                .inst(arena, *symbols))
-                try!(try!(ctx.assumptions.look(x)
-                          .ok_or(Error))
-                          .inst(arena, ctx.symbols))
+            // let res = {
+            //     let Ctx { ref mut symbols, ref tys, ref mut cache, ref assumptions, .. } = *ctx;
+            //     let i = cache.get(x);
+            //     try!(tys[*try!(i.map_or_else( || assumptions.look(x).ok_or(Error), |x| Ok(x) ))]
+            //                    .inst(arena, *symbols))
+            // };
+            let res = match ctx.assumptions.look(x) {
+                Some(s) => try!(s.inst(arena, ctx.symbols)),
+                None => MonoTy {
+                    ty: Cell::new(MT::Var(*x)),
+                    uf: UnionFind::new(),
+                }
             };
             end(ctx, &res);
             res
@@ -473,9 +479,32 @@ let right lambda e
 let p prod n false in
 right p
 ";
-//let x right p in
-//let q prod false n in
-//left p
+
+    static BINARY_SUMS: &'static str = r"
+let void r in
+let abort lambda e e in
+let Left lambda e
+    lambda x lambda y x e in
+let Right lambda e
+    lambda x lambda y y e in
+let case lambda e lambda l lambda r
+    e l r in
+
+let f lambda f
+    let s Right true in
+    let t Left n in
+    let _ f s in
+    let _ f t in
+    let l lambda x1 false in
+    let r lambda x2 x2 in
+    case s l r
+in f lambda x lambda y y
+";
+
+    static TEST_FAILURE: &'static str = r"
+let foo lambda x lambda x x in
+foo
+";
 
     #[test]
     fn it_works() {
@@ -490,6 +519,8 @@ let bar lambda x
     in foo
 in bar", &mut symbols).unwrap();
         let exp3 = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
+        let exp4 = parse(BINARY_SUMS, &mut symbols).unwrap();
+        let exp5 = parse(TEST_FAILURE, &mut symbols).unwrap();
         bench(|t| t(), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp1, sym_arena, arena).unwrap();
             assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
@@ -498,6 +529,11 @@ in bar", &mut symbols).unwrap();
 
             let ty = hm(&mut ctx, &exp3, sym_arena, arena).unwrap();
             assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
+
+            let ty = hm(&mut ctx, &exp4, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
+
+            hm(&mut ctx, &exp5, sym_arena, arena).unwrap();
         });
     }
 
