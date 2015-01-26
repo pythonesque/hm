@@ -6,13 +6,13 @@ extern crate rustc;
 
 use exp::Exp as E;
 pub use exp::parse::parse;
-use self::MonoTyData as MT;
-use symbol::{Symbol, Table, Symbols};
+use symbol::{Symbol, Symbols, Table};
+use ty::{MonoTy, Ty, TyFun, TyVar};
+use ty::MonoTyData as MT;
 use union_find::{UnionFind, UnionFindable};
 
 use arena::TypedArena;
 //use collect::LruCache;
-use std::borrow::Cow;
 use std::cell::Cell;
 #[cfg(feature = "debug")] use std::cmp;
 use std::error::FromError;
@@ -22,59 +22,18 @@ use std::iter::repeat;
 
 pub mod exp;
 pub mod symbol;
+pub mod ty;
 mod union_find;
-
-pub type TyVar<'a> = Symbol<'a>;
-
-pub type Arity = u8;
 
 //const CACHE_CAPACITY: usize = 8;
 
-#[derive(Clone,Copy,Eq,PartialEq)]
-pub struct TyFun<'a> {
-    pub name: Symbol<'a>,
-    pub arity: Arity,
-}
-
-#[derive(Copy,Clone,PartialEq)]
-pub enum MonoTyData<'a, 'b> where 'a: 'b {
-    Var(TyVar<'a>),
-    App(TyFun<'a>, &'b [MonoTy<'a,'b>]),
-}
-
-#[derive(Debug)]
-pub struct MonoTy<'a,'b> where 'a: 'b {
-    uf: UnionFind<'b, MonoTy<'a,'b>>,
-    ty: Cell<MonoTyData<'a, 'b>>,
-}
-
-impl<'a, 'b> PartialEq for MonoTy<'a, 'b> where 'a: 'b {
-    fn eq(&self, other: &Self) -> bool {
-        self.ty.get() == other.ty.get()
-    }
-}
-
-pub enum Ty<'a,'b> where 'a: 'b {
-    Quant(Vec<TyVar<'a>>, &'b MonoTy<'a,'b>),
-}
-
 // FIXME: Construct a proper error type.
-#[allow(missing_copy_implementations)]
-pub struct Error;
-
-impl FromError<symbol::Error> for Error {
-    fn from_error(_: symbol::Error) -> Self {
-        Error
-    }
+pub enum Error {
+    Ty(ty::Error),
+    Symbol(symbol::Error),
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Inference failure.")
-    }
-}
-
-pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+pub struct Ctx<'a,'b,'c> where 'a: 'b + 'c {
     symbols: &'c mut Symbols<'a>,
     //tys: Vec<Ty<'a,'b>>,
     //cache: LruCache<Symbol<'a>, usize>,
@@ -84,202 +43,34 @@ pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(feature = "debug")] indent: u8,
 }
 
-pub type MonoTyCow<'a, 'b> = Cow<'b, MonoTy<'a,'b>, MonoTy<'a,'b>>;
+impl FromError<symbol::Error> for Error {
+    fn from_error(e: symbol::Error) -> Self {
+        Error::Symbol(e)
+    }
+}
 
-impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+impl FromError<ty::Error> for Error {
+    fn from_error(e: ty::Error) -> Self {
+        Error::Ty(e)
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::Ty(ref e) => write!(f, "Type error during inference - {}", e),
+            Error::Symbol(ref e) => write!(f, "Symbol error during inference - {}", e),
+        }
+    }
+}
+
+impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b + 'c {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.assumptions.fmt(f, self.symbols)
     }
 }
 
-impl <'a> TyFun<'a> {
-    fn infix(&self) -> bool {
-        self.arity == 2 && match Symbols::new().name(&self.name) {
-            Some("→") => true,
-            _ => false,
-        }
-    }
-}
-
-impl<'a> fmt::Debug for TyFun<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Symbols::new().fmt(f, &self.name)
-    }
-}
-
-impl<'a,'b> fmt::Debug for MonoTyData<'a,'b> where 'a: 'b {
-    fn fmt<'c, 'd>(&'c self, f: &'d mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            MT::Var(ref a) => Symbols::new().fmt(f,a),
-            MT::App(ref d, ref ts) => {
-                let mut write_space = !d.infix();
-                if write_space { try!(write!(f, "{:?}", d)) }
-                for t in ts.iter() {
-                    let t = &t.find().ty.get();
-                    if write_space { try!(write!(f, " ")) }
-                    try!(match *t {
-                        MT::Var(_) | MT::App(TyFun { arity: 0, .. }, _) =>
-                            write!(f, "{:?}", t),
-                        _ => write!(f, "({:?})", t),
-                    });
-                    if !write_space {
-                        try!(write!(f, " {:?}", d));
-                        write_space = true;
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
-    fn copy(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
-        match self.ty.get() {
-            MT::Var(a) =>
-                UnionFindable::copy(self, |uf| MonoTy { ty: Cell::new(MT::Var(a)), uf: uf }),
-            MT::App(d, ts) => MonoTy {
-                ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
-                                                          .map( |t| t.copy(arena) )
-                                                          .collect()))),
-                uf: UnionFind::new(),
-            },
-        }
-    }
-
-    // Early return if closure (which is a filter) returns true
-    fn free<'c, F>(&'b self, f: &'c mut F) -> bool where 'b: 'c, 'a: 'c, F: FnMut(TyVar<'a>) -> bool {
-        match self.find().ty.get() {
-            MT::Var(a) => f(a),
-            MT::App(_, ts) => {
-                ts.iter().any( |t| t.free(f) )
-            }
-        }
-    }
-
-    fn subst<'c>(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, substs: &'c Table<'a, &'b MonoTy<'a,'b>>) -> MonoTy<'a,'b> {
-        match self.ty.get() {
-            MT::Var(ref a) => substs.look(a).unwrap_or(&self).copy(arena),
-            MT::App(d, ref ts) => MonoTy {
-                ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
-                                                .map( |t| t.subst(arena, substs) )
-                                                .collect()))),
-                uf: UnionFind::new(),
-            },
-        }
-    }
-
-    pub fn unify(&'b self, other: &'b MonoTy<'a,'b>) -> Result<(), Error> {
-        let ta = self.find();
-        let tb = other.find();
-        //println!("UNIFY: {:?} , {:?}", ta, tb);
-        match (ta.ty.get(), tb.ty.get()) {
-            (MT::App(da, tsa), MT::App(db, tsb)) if da == db => {
-                for (ta,tb) in tsa.iter().zip(tsb.iter()) {
-                    try!(ta.unify(tb))
-                }
-                Ok(())
-            },
-            (MT::App(_,_), MT::App(_,_)) => Err(Error),
-            (MT::App(_,ts), MT::Var(t)) | (MT::Var(t), MT::App(_, ts)) => {
-                // Occurs check
-                if ts.iter().any( |t_| t_.free( &mut |t_| t_ == t ) ) { return Err(Error) }
-                Ok(ta.union(tb))
-            },
-            _ => Ok(ta.union(tb)),
-        }
-    }
-
-    pub fn gen<'c,'d>(&'b self, ctx: &'d Ctx<'a,'b,'c>) -> Ty<'a,'b> where 'a: 'b, 'a: 'd, 'a: 'c {
-        let mut set = Vec::new();
-        let ty = self;
-        ty.free( &mut |a| {
-            set.push(a);
-            false
-        } );
-        ctx.free( &mut |b| {
-            let mut i = 0;
-            while i < set.len() {
-                if set[i] == b {
-                    set.swap_remove(i);
-                }
-                i += 1;
-            }
-            false
-        } );
-        set.sort();
-        set.dedup();
-        Ty::Quant(set, ty)
-    }
-}
-
-impl<'a,'b> UnionFindable<'b> for MonoTy<'a,'b> where 'a: 'b {
-    #[inline]
-    fn as_union_find<'c>(&'c self) -> &'c UnionFind<'b, Self> {
-        &self.uf
-    }
-
-    fn on_union<'c>(&'c self, parent: &'b Self) {
-        let x = self.ty.get();
-        let p = parent;
-        let y = p.ty.get();
-        //println!("Child: {:?} {:p}, parent: {:?} {:p}", x, &self.uf as *const _, y, &parent.uf as *const _);
-        if let (MT::App(_,_), MT::Var(_)) = (x, y) {
-            // Var should never be the child of an App
-            self.ty.set(y);
-            p.ty.set(x);
-        }
-    }
-}
-
-impl<'a,'b> Ty<'a,'b> where 'a: 'b {
-    fn free<'c, F>(&'c self, f: &'c mut F) -> bool where F: FnMut(TyVar<'a>) -> bool, 'a: 'c {
-        match *self {
-            Ty::Quant(ref a, t) => t.free(&mut |a_| {
-                // Want TyVars that are free in t but aren't included in our quantifiers.
-                if a.iter().any( |&a| a_ == a ) { return true }
-                //println!("{:?} free in {:?}", a_, a);
-                // Now we know that this is the case, so run the function.
-                f(a_)
-            })
-        }
-    }
-
-    pub fn inst<'c>(&'c self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,symbol::Error> where 'a: 'b {
-        match *self {
-            Ty::Quant(ref a, ref t) => {
-                let mut substs = symbols.empty();
-                let mut vec = Vec::with_capacity(a.len());
-                for _ in range(0, a.len()) {
-                    vec.push(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
-                }
-                let mut b = arena.alloc(vec).iter();
-                for a in a.iter() {
-                    // Unwrap cannot fail here because we iterate in lockstep.
-                    substs.enter(a, b.next().unwrap());
-                }
-                Ok(t.subst(arena, &mut substs))
-            }
-        }
-    }
-}
-
-impl<'a,'b> fmt::Display for Ty<'a,'b> where 'a: 'b {
-    fn fmt<'c,'d>(&'c self, f: &'d mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Ty::Quant(ref a, ref ty) => {
-                for a in a.iter() {
-                    try!(write!(f, "∀ "));
-                    try!(Symbols::new().fmt(f, a));
-                    try!(write!(f, ". "))
-                }
-                write!(f, "{:?}", ty.find().ty.get())
-            },
-        }
-    }
-}
-
-impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
+impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b + 'c {
     #[cfg(feature = "debug")]
     pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> {
         let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
@@ -294,7 +85,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     }
 
     #[cfg(not(feature = "debug"))]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> where 'a: 'b {
         let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
         Ok(Ctx {
             assumptions: assumptions,
@@ -327,12 +118,51 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(not(feature = "debug"))] #[inline] fn debug<T>(_: T) where T: FnOnce() {}
 }
 
+fn gen<'a,'b,'c,'d>(t: &'b MonoTy<'a,'b>, ctx: &'d Ctx<'a,'b,'c>) -> Ty<'a,'b> where 'a: 'b + 'c + 'd {
+    let mut set = Vec::new();
+    t.free( &mut |a| {
+        set.push(a);
+        false
+    } );
+    ctx.free( &mut |b| {
+        let mut i = 0;
+        while i < set.len() {
+            if set[i] == b {
+                set.swap_remove(i);
+            }
+            i += 1;
+        }
+        false
+    } );
+    set.sort();
+    set.dedup();
+    Ty::Quant(set, t)
+}
+
+fn inst<'a,'b,'c>(s: &'c Ty<'a,'b>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, symbols: &'c mut Symbols<'a>) -> Result<MonoTy<'a,'b>,symbol::Error> where 'a: 'b {
+    match *s {
+        Ty::Quant(ref a, ref t) => {
+            let mut substs = symbols.empty();
+            let mut vec = Vec::with_capacity(a.len());
+            for _ in range(0, a.len()) {
+                vec.push(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
+            }
+            let mut b = arena.alloc(vec).iter();
+            for a in a.iter() {
+                // Unwrap cannot fail here because we iterate in lockstep.
+                substs.enter(a, b.next().unwrap());
+            }
+            Ok(t.subst(arena, &mut substs))
+        }
+    }
+}
+
 pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
                     exp: &'e E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, Error>
-    where 'a: 'b, 'a: 'c, 'a: 'd, 'a: 'e,
+    where 'a: 'b + 'c + 'd + 'e, 'a: 'b
 {
     Ctx::debug(|| {
         let indent = ctx.indent(2);
@@ -340,7 +170,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
         println!("{} ⊦ {}: ", &*ctx, exp);
     });
     #[inline]
-    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b, 'a: 'c, 'a: 'd {
+    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b + 'c + 'd {
         Ctx::debug(|| {
             let indent = ctx.indent(-2);
             print!("{}", repeat(' ').take(indent as usize).collect::<String>());
@@ -356,7 +186,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
             //                    .inst(arena, *symbols))
             // };
             let res = match ctx.assumptions.look(x) {
-                Some(s) => try!(s.inst(arena, ctx.symbols)),
+                Some(s) => try!(inst(s, arena, ctx.symbols)),
                 None => MonoTy {
                     ty: Cell::new(MT::Var(*x)),
                     uf: UnionFind::new(),
@@ -409,7 +239,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
         },
         E::Let(ref x, ref e0, ref e1) => {
             let t = try!(hm(ctx, &**e0, sym_arena, arena));
-            let s = sym_arena.alloc(t).gen(ctx);
+            let s = gen(sym_arena.alloc(t), ctx);
             // TODO: Alpha substitution etc.
             //let old = ctx.assumptions.enter(x, ctx.tys.len());
             //ctx.cache.insert(*x, ctx.tys.len());
@@ -432,9 +262,10 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
 mod tests {
     extern crate test;
 
-    use super::{Ctx, hm, MonoTy, parse, Ty, TyFun};
-    use super::MonoTyData as MT;
+    use super::{Ctx, hm, parse};
     use symbol::Symbols;
+    use ty::{MonoTy, Ty, TyFun};
+    use ty::MonoTyData as MT;
     use union_find::{UnionFind, UnionFindable};
 
     use std::cell::Cell;
