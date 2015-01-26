@@ -398,4 +398,17 @@ in bar", &mut symbols).unwrap();
             assert_eq!(MT::App(boolean, &[]), ty.find_immutable().ty.get());
         });
     }
+
+    #[bench]
+    fn bench_binary_sums_hm(b: &mut test::Bencher) {
+        let mut symbols = Symbols::new();
+        let boolean = TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 };
+        let exp = parse(
+            BINARY_SUMS,
+            &mut symbols).unwrap();
+        bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
+            let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(boolean, &[]), ty.find_immutable().ty.get());
+        });
+    }
 }
