@@ -4,7 +4,7 @@ use self::MonoTyData as MT;
 use std::cell::Cell;
 use std::fmt;
 use symbol::{Symbol, Symbols, Table};
-use union_find::{UnionFind, UnionFindable};
+use union_find::{self, UnionFind, UnionFindable};
 
 pub type TyVar<'a> = Symbol<'a>;
 
@@ -71,7 +71,7 @@ impl<'a,'b> fmt::Debug for MonoTyData<'a,'b> where 'a: 'b {
                 let mut write_space = !d.infix();
                 if write_space { try!(write!(f, "{:?}", d)) }
                 for t in ts.iter() {
-                    let t = &t.find().ty.get();
+                    let t = &union_find::find(t).ty.get();
                     if write_space { try!(write!(f, " ")) }
                     try!(match *t {
                         MT::Var(_) | MT::App(TyFun { arity: 0, .. }, _) =>
@@ -93,7 +93,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
     pub fn copy(&'b self, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>) -> MonoTy<'a,'b> {
         match self.ty.get() {
             MT::Var(a) =>
-                UnionFindable::copy(self, |uf| MonoTy { ty: Cell::new(MT::Var(a)), uf: uf }),
+                union_find::copy(self, |uf| MonoTy { ty: Cell::new(MT::Var(a)), uf: uf }),
             MT::App(d, ts) => MonoTy {
                 ty: Cell::new(MT::App(d, &**arena.alloc(ts.iter()
                                                           .map( |t| t.copy(arena) )
@@ -105,7 +105,7 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
 
     // Early return if closure (which is a filter) returns true
     pub fn free<'c, F>(&'b self, f: &'c mut F) -> bool where 'b: 'c, 'a: 'c, F: FnMut(TyVar<'a>) -> bool {
-        match self.find().ty.get() {
+        match union_find::find(self).ty.get() {
             MT::Var(a) => f(a),
             MT::App(_, ts) => {
                 ts.iter().any( |t| t.free(f) )
@@ -126,8 +126,8 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
     }
 
     pub fn unify(&'b self, other: &'b MonoTy<'a,'b>) -> Result<(), Error> {
-        let ta = self.find();
-        let tb = other.find();
+        let ta = union_find::find(self);
+        let tb = union_find::find(other);
         //println!("UNIFY: {:?} , {:?}", ta, tb);
         match (ta.ty.get(), tb.ty.get()) {
             (MT::App(da, tsa), MT::App(db, tsb)) if da == db => {
@@ -140,9 +140,9 @@ impl<'a,'b> MonoTy<'a,'b> where 'a: 'b {
             (MT::App(_,ts), MT::Var(t)) | (MT::Var(t), MT::App(_, ts)) => {
                 // Occurs check
                 if ts.iter().any( |t_| t_.free( &mut |t_| t_ == t ) ) { return Err(Error) }
-                Ok(ta.union(tb))
+                Ok(union_find::union(ta, tb))
             },
-            _ => Ok(ta.union(tb)),
+            _ => Ok(union_find::union(ta, tb)),
         }
     }
 }
@@ -189,7 +189,7 @@ impl<'a,'b> fmt::Display for Ty<'a,'b> where 'a: 'b {
                     try!(Symbols::new().fmt(f, a));
                     try!(write!(f, ". "))
                 }
-                write!(f, "{:?}", ty.find().ty.get())
+                write!(f, "{:?}", union_find::find(*ty).ty.get())
             },
         }
     }

@@ -9,7 +9,7 @@ pub use exp::parse::parse;
 use symbol::{Symbol, Symbols, Table};
 use ty::{MonoTy, Ty, TyFun, TyVar};
 use ty::MonoTyData as MT;
-use union_find::{UnionFind, UnionFindable};
+use union_find::UnionFind;
 
 use arena::TypedArena;
 //use collect::LruCache;
@@ -20,9 +20,9 @@ use std::fmt;
 use std::iter::repeat;
 #[cfg(feature = "debug")] use std::num::Int;
 
-pub mod exp;
-pub mod symbol;
-pub mod ty;
+mod exp;
+mod symbol;
+mod ty;
 mod union_find;
 
 //const CACHE_CAPACITY: usize = 8;
@@ -85,7 +85,7 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b + 'c {
     }
 
     #[cfg(not(feature = "debug"))]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> where 'a: 'b {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> {
         let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
         Ok(Ctx {
             assumptions: assumptions,
@@ -157,6 +157,15 @@ fn inst<'a,'b,'c>(s: &'c Ty<'a,'b>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, s
     }
 }
 
+#[inline]
+fn end<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>, res: &'e MonoTy<'a,'b>) where 'a: 'b + 'c + 'd {
+    Ctx::debug(|| {
+        let indent = ctx.indent(-2);
+        print!("{}", repeat(' ').take(indent as usize).collect::<String>());
+        println!("{:?}", union_find::find_immutable(res).ty.get() );
+    })
+}
+
 pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
                     exp: &'e E<'a>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
@@ -169,14 +178,6 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
         print!("{}", repeat(' ').take(indent as usize).collect::<String>());
         println!("{} ⊦ {}: ", &*ctx, exp);
     });
-    #[inline]
-    fn end<'a,'b,'c,'d>(ctx: &'c mut Ctx<'a,'b,'d>, res: &MonoTy<'a,'b>) where 'a: 'b + 'c + 'd {
-        Ctx::debug(|| {
-            let indent = ctx.indent(-2);
-            print!("{}", repeat(' ').take(indent as usize).collect::<String>());
-            println!("{:?}", res.find_immutable().ty.get() );
-        })
-    }
     Ok(match *exp {
         E::Var(ref x) => {
             // let res = {
@@ -205,7 +206,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
                 uf: UnionFind::new(),
             });
             try!(t0.unify(app));
-            let res = UnionFindable::copy(&args[1], move |:uf| MonoTy {
+            let res = union_find::copy(&args[1], move |:uf| MonoTy {
                 ty: Cell::new(t),
                 uf: uf,
             });
@@ -266,7 +267,7 @@ mod tests {
     use symbol::Symbols;
     use ty::{MonoTy, Ty, TyFun};
     use ty::MonoTyData as MT;
-    use union_find::{UnionFind, UnionFindable};
+    use union_find::{find_immutable, UnionFind};
 
     use std::cell::Cell;
     use arena::TypedArena;
@@ -359,15 +360,15 @@ in bar", &mut symbols).unwrap();
         let exp5 = parse(OCCURS_CHECK, &mut symbols).unwrap();
         bench(|t| t(), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp1, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(int, &[]), find_immutable(&ty).ty.get());
 
             hm(&mut ctx, &exp2, sym_arena, arena).unwrap();
 
             let ty = hm(&mut ctx, &exp3, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(bool, &[]), find_immutable(&ty).ty.get());
 
             let ty = hm(&mut ctx, &exp4, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(bool, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(bool, &[]), find_immutable(&ty).ty.get());
 
             hm(&mut ctx, &exp5, sym_arena, arena).err().expect("Occurs check failed");
         });
@@ -382,7 +383,7 @@ in bar", &mut symbols).unwrap();
             &mut symbols).unwrap();
         bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(int, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(int, &[]), find_immutable(&ty).ty.get());
         });
     }
 
@@ -395,7 +396,7 @@ in bar", &mut symbols).unwrap();
             &mut symbols).unwrap();
         bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(boolean, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(boolean, &[]), find_immutable(&ty).ty.get());
         });
     }
 
@@ -408,7 +409,7 @@ in bar", &mut symbols).unwrap();
             &mut symbols).unwrap();
         bench(|t| b.iter(|| t()), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp, sym_arena, arena).unwrap();
-            assert_eq!(MT::App(boolean, &[]), ty.find_immutable().ty.get());
+            assert_eq!(MT::App(boolean, &[]), find_immutable(&ty).ty.get());
         });
     }
 }

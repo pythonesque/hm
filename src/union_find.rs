@@ -20,47 +20,63 @@ pub struct UnionFind<'a, T: ?Sized> where T: 'a {
     rank: Cell<u8>
 }
 
-pub trait UnionFindable<'a>: 'a {
-    fn copy<F>(&'a self, init: F) -> Self where Self: Sized, F: FnOnce(UnionFind<'a, Self>) -> Self {
-        let oroot = self.find();
-        let yroot = oroot.as_union_find();
-        // We know we are rank 0, so we can always point to the parent.
-        if yroot.rank.get() == 0 { yroot.rank.set(1) }
-        let root = init(UnionFind {
-            parent: Cell::new(Some(oroot)),
-            rank: Cell::new(0)
-        });
-        root.on_union(oroot);
-        root
+fn find_inner<'a, T: ?Sized>(uf: &'a T) -> &T where T: UnionFindable<'a> + 'a {
+    let x = uf.as_union_find();
+    match x.parent.get() {
+        Some(p) => {
+            let p = find(p);
+            x.parent.set(Some(p));
+            p
+        },
+        None => uf
     }
+}
 
-    fn as_union_find<'b>(&'b self) -> &'b UnionFind<'a, Self>;
+pub fn copy<'a, T: ?Sized, F>(uf: &'a T, init: F) -> T
+    where T: UnionFindable<'a> + Sized + 'a,
+          F: FnOnce(UnionFind<'a, T>) -> T,
+{
+    let oroot = find(uf);
+    let yroot = oroot.as_union_find();
+    // We know we are rank 0, so we can always point to the parent.
+    if yroot.rank.get() == 0 { yroot.rank.set(1) }
+    let root = init(UnionFind {
+        parent: Cell::new(Some(oroot)),
+        rank: Cell::new(0)
+    });
+    root.on_union(oroot);
+    root
+}
 
-    fn on_union<'b>(&'b self, parent: &'a Self);
-
-    fn find(&'a self) -> &Self {
-        let x = self.as_union_find();
-        match x.parent.get() {
-            Some(p) => {
-                let p = p.find();
-                x.parent.set(Some(p));
-                p
-            },
-            None => self
-        }
+#[inline(always)]
+pub fn find<'a, T: ?Sized>(uf: &'a T) -> &T where T: UnionFindable<'a> + 'a {
+    let x = uf.as_union_find();
+    match x.parent.get() {
+        Some(p) => {
+            let p = find_inner(p);
+            x.parent.set(Some(p));
+            p
+        },
+        None => uf
     }
+}
 
-    fn find_immutable<'c>(&'c self) -> &'c Self where 'a: 'c {
-        let x = self.as_union_find();
-        match x.parent.get() {
-            Some(ref p) => p.find_immutable(),
-            None => self
-        }
+#[inline]
+pub fn find_immutable<'a, 'c, T: ?Sized>(uf: &'c T) -> &'c T
+    where T: UnionFindable<'a> + 'a,
+          'a: 'c,
+{
+    let x = uf.as_union_find();
+    match x.parent.get() {
+        Some(ref p) => find_immutable(*p),
+        None => uf
     }
+}
 
-    fn union(&'a self, other: &'a Self) {
-        let root = self.find();
-        let oroot = other.find();
+#[inline(always)]
+pub fn union<'a, T: ?Sized>(uf: &'a T, other: &'a T) where T: UnionFindable<'a> + 'a {
+        let root = find(uf);
+        let oroot = find(other);
         let xroot = root.as_union_find();
         let yroot = oroot.as_union_find();
         if xroot as *const _ == yroot as *const _ { return }
@@ -83,6 +99,12 @@ pub trait UnionFindable<'a>: 'a {
             }
         }
     }
+
+pub trait UnionFindable<'a>: 'a {
+    fn as_union_find<'b>(&'b self) -> &'b UnionFind<'a, Self>;
+
+    fn on_union<'b>(&'b self, parent: &'a Self);
+
 }
 
 impl<'a,T> UnionFind<'a, T> where T: UnionFindable<'a> + 'a {
