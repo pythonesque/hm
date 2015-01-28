@@ -28,6 +28,7 @@ mod union_find;
 //const CACHE_CAPACITY: usize = 8;
 
 // FIXME: Construct a proper error type.
+#[derive(Debug)]
 pub enum Error {
     Ty(ty::Error),
     Symbol(symbol::Error),
@@ -72,7 +73,7 @@ impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b + 'c {
 
 impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b + 'c {
     #[cfg(feature = "debug")]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> where 'a: 'b {
         let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
         Ok(Ctx {
             assumptions: assumptions,
@@ -171,7 +172,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
                     sym_arena: &'b TypedArena<MonoTy<'a,'b>>,
                     arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>
                    ) -> Result<MonoTy<'a,'b>, Error>
-    where 'a: 'b + 'c + 'd + 'e, 'a: 'b
+    where 'a: 'b + 'c + 'd + 'e
 {
     Ctx::debug(|| {
         let indent = ctx.indent(2);
@@ -298,7 +299,7 @@ mod tests {
             //ctx.tys.push(Ty::Quant(vec![], &f_ty));
             //ctx.assumptions.enter(&f, 2);
             ctx.assumptions.enter(&f, Ty::Quant(vec![], &f_ty));
-            closure(ctx, &sym_arena, &arena);//, sym_arena, arena)
+            closure(ctx, &sym_arena, &arena);
         });
     }
 

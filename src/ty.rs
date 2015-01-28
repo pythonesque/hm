@@ -12,6 +12,7 @@ pub type Arity = u8;
 
 // FIXME: Create a proper error type.
 #[allow(missing_copy_implementations)]
+#[derive(Debug)]
 pub struct Error;
 
 impl fmt::Display for Error {
