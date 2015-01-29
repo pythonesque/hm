@@ -1,4 +1,5 @@
-#![allow(unstable)]
+#![feature(core,hash,rustc_private,std_misc)]
+#![cfg_attr(test, feature(test))]
 
 extern crate arena;
 //extern crate collect;
@@ -34,7 +35,7 @@ pub enum Error {
     Symbol(symbol::Error),
 }
 
-pub struct Ctx<'a,'b,'c> where 'a: 'b + 'c {
+pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     symbols: &'c mut Symbols<'a>,
     //tys: Vec<Ty<'a,'b>>,
     //cache: LruCache<Symbol<'a>, usize>,
@@ -73,7 +74,7 @@ impl<'a,'b,'c> fmt::Display for Ctx<'a,'b,'c> where 'a: 'b + 'c {
 
 impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b + 'c {
     #[cfg(feature = "debug")]
-    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> where 'a: 'b {
+    pub fn new(assumptions: Table<'b, Ty<'a,'b>>, symbols: &'c mut Symbols<'a>) -> Result<Ctx<'a,'b,'c>,symbol::Error> {
         let fun = TyFun { name: try!(symbols.symbol("→")), arity: 2 };
         Ok(Ctx {
             assumptions: assumptions,
@@ -104,7 +105,9 @@ impl<'a,'b,'c> Ctx<'a,'b,'c> where 'a: 'b + 'c {
         }
         false
     }
+}
 
+impl<'a,'b,'c> Ctx<'a,'b,'c> {
     #[cfg(feature = "debug")] fn indent<'d>(&'d mut self, delta: i8) -> u8 {
         let indent = self.indent;
         self.indent = (indent as i8).saturating_add(delta) as u8;
@@ -231,7 +234,8 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
             let t = match t {
                 Ty::Quant(_, t) => t,
             };
-            let args = arena.alloc(vec![t.copy(arena), res]);
+            let args = vec![t.copy(arena), res];
+            let args = arena.alloc(args);
             let app = MonoTy {
                 ty: Cell::new(MT::App(ctx.fun, &**args)),
                 uf: UnionFind::new(),
@@ -283,13 +287,15 @@ mod tests {
         let t = symbols.symbol("true").unwrap();
         let f = symbols.symbol("false").unwrap();
         b( &mut || {
-            let n_ty = MonoTy { ty: Cell::new(MT::App(int, &[])), uf: UnionFind::new() };
-            let t_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
-            let f_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
+            let (arena,sym_arena,n_ty,t_ty,f_ty) = (
+                TypedArena::new(),
+                TypedArena::new(),
+                MonoTy { ty: Cell::new(MT::App(int, &[])), uf: UnionFind::new() },
+                MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() },
+                MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() },
+            );
             let assumptions = symbols.empty();
             let mut ctx = Ctx::new(assumptions, &mut symbols).unwrap();
-            let sym_arena: TypedArena<MonoTy> = TypedArena::new();
-            let arena: TypedArena<Vec<MonoTy>> = TypedArena::new();
             //ctx.tys.push(Ty::Quant(vec![], &n_ty));
             //ctx.assumptions.enter(&n, 0);
             ctx.assumptions.enter(&n, Ty::Quant(vec![], &n_ty));
