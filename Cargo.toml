@@ -1,10 +1,17 @@
 [package]
 
-name = "hm"
+name = "typesystem"
 version = "0.0.1"
 authors = ["Joshua Yanovski <pythonesque@gmail.com>"]
+description = "Type system experiments in Rust."
 
 [dependencies]
+
+[dependencies.util]
+path = "./src/util"
+
+[dependencies.hm]
+path = "./src/hm"
 
 [features]
 

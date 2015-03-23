@@ -3,8 +3,8 @@ use arena::TypedArena;
 use self::MonoTyData as MT;
 use std::cell::Cell;
 use std::fmt;
-use symbol::{Symbol, Symbols, Table};
-use union_find::{self, UnionFind, UnionFindable};
+use util::symbol::{Symbol, Symbols, Table};
+use util::union_find::{self, UnionFind, UnionFindable};
 
 pub type TyVar<'a> = Symbol<'a>;
 

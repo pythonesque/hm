@@ -1,5 +1,5 @@
 use self::Exp as E;
-use symbol::{Symbol, Symbols};
+use util::symbol::{Symbol, Symbols};
 
 use std::fmt;
 
@@ -37,7 +37,7 @@ pub mod parse {
     use self::ErrorKind as EK;
     use self::Tok as T;
     use super::Exp as E;
-    use symbol::{Symbol, Symbols};
+    use util::symbol::{Symbol, Symbols};
 
     use std::fmt;
 
