@@ -1,4 +1,4 @@
-#![feature(core,hash,rustc_private,std_misc)]
+#![feature(core,rustc_private,static_assert,std_misc)]
 #![cfg_attr(test, feature(test))]
 
 extern crate arena;
@@ -21,10 +21,10 @@ use std::fmt;
 use std::iter::repeat;
 #[cfg(feature = "debug")] use std::num::Int;
 
-mod exp;
-mod symbol;
-mod ty;
-mod union_find;
+pub mod exp;
+pub mod symbol;
+pub mod ty;
+pub mod union_find;
 
 //const CACHE_CAPACITY: usize = 8;
 
@@ -148,7 +148,7 @@ fn inst<'a,'b,'c>(s: &'c Ty<'a,'b>, arena: &'b TypedArena<Vec<MonoTy<'a,'b>>>, s
         Ty::Quant(ref a, ref t) => {
             let mut substs = symbols.empty();
             let mut vec = Vec::with_capacity(a.len());
-            for _ in range(0, a.len()) {
+            for _ in 0..a.len() {
                 vec.push(MonoTy { ty: Cell::new(MT::Var(try!(symbols.fresh()))), uf: UnionFind::new() });
             }
             let mut b = arena.alloc(vec).iter();
@@ -210,7 +210,7 @@ pub fn hm<'a,'b,'c,'d,'e>(ctx: &'c mut Ctx<'a,'b,'d>,
                 uf: UnionFind::new(),
             });
             try!(t0.unify(app));
-            let res = union_find::copy(&args[1], move |:uf| MonoTy {
+            let res = union_find::copy(&args[1], move |uf| MonoTy {
                 ty: Cell::new(t),
                 uf: uf,
             });

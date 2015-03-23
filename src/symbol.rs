@@ -3,7 +3,8 @@ use std::cmp::Ordering;
 use std::collections::hash_map::{self, Entry, HashMap};
 use std::default::Default;
 use std::fmt::{self, Display};
-use std::hash::{Hash, Hasher, Writer};
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::num::Int;
 
 type S = u32;
@@ -22,9 +23,9 @@ impl fmt::Display for Error {
 #[derive(Copy,Clone,Debug,Eq)]
 pub struct Symbol<'a>(Option<&'a str>, S);
 
-impl<'a,H> Hash<H> for Symbol<'a> where H: Hasher + Writer {
+impl<'a> Hash for Symbol<'a> {
     #[inline]
-    fn hash(&self, state: &mut H) {
+    fn hash<H>(&self, state: &mut H) where H: Hasher {
         self.1.hash(state)
     }
 }
@@ -99,6 +100,7 @@ impl<'a> Symbols<'a> {
     // Taking self is future proofing (if we need to shrink variable sizes).
     pub fn empty<'b, 'c, T>(&'b self) -> Table<'c, T> {
         Table {
+            phantom: PhantomData,
             table: Default::default(),
         }
     }
@@ -106,6 +108,7 @@ impl<'a> Symbols<'a> {
 
 #[derive(Clone)]
 pub struct Table<'a, T> {
+    phantom: PhantomData<&'a ()>,
     table: FnvHashMap<S, T>,
 }
 
@@ -149,7 +152,7 @@ impl<'a, T> Table<'a, T> {
             let reverse_map = symbols.symbols.iter()
                                              .map( |(&i, &name)| (name, i) )
                                              .collect::<HashMap<_,_>>();
-            let name = |&: i| Symbol(reverse_map.get(i).map( |&name| name ), *i);
+            let name = |i| Symbol(reverse_map.get(i).map( |&name| name ), *i);
             try!(symbols.fmt(f, &name(i)));
             try!(write!(f, ": {}", v));
             for (i, v) in iter {
