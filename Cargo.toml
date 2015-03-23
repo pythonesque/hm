@@ -13,6 +13,9 @@ path = "./src/util"
 [dependencies.hm]
 path = "./src/hm"
 
+[dependencies.pts]
+path = "./src/pts"
+
 [features]
 
 debug = []
