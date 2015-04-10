@@ -50,13 +50,13 @@ pub mod parse {
         EOF,
     }
 
-    #[derive(Copy,Debug)]
+    #[derive(Clone,Copy,Debug)]
     pub struct Error {
         pub pos: usize,
         pub kind: ErrorKind,
     }
 
-    #[derive(Copy,Debug)]
+    #[derive(Clone,Copy,Debug)]
     pub enum ErrorKind {
         Parse,
         Symbol,
@@ -83,7 +83,7 @@ pub mod parse {
         }, Ctx { s: &s[tok_len..], pos: pos + tok_len })
     }
 
-    #[derive(Copy)]
+    #[derive(Clone,Copy)]
     struct Ctx<'a> {
         s: &'a str,
         pos: usize,

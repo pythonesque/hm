@@ -5,6 +5,7 @@ extern crate util;
 pub use exp::parse::parse;
 
 pub mod exp;
+pub mod spec;
 
 #[cfg(test)]
 mod tests {

@@ -11,7 +11,7 @@ use std::u8;
 /// types to never overflow.  In theory we should constrain it so users can't specify their own
 /// types though.
 #[static_assert]
-static _NO_CHECKED_ADD_NEEDED: bool = usize::BITS <= u8::MAX as u32;
+static _NO_CHECKED_ADD_NEEDED: bool = usize::BITS <= u8::MAX as usize;
 
 // Cannot implement Clone and retain correct semantics.
 #[derive(Debug)]

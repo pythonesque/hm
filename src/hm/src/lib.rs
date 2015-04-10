@@ -17,7 +17,6 @@ use arena::TypedArena;
 //use collect::LruCache;
 use std::cell::Cell;
 #[cfg(feature = "debug")] use std::cmp;
-use std::error::FromError;
 use std::fmt;
 use std::iter::repeat;
 #[cfg(feature = "debug")] use std::num::Int;
@@ -44,14 +43,14 @@ pub struct Ctx<'a,'b,'c> where 'a: 'b, 'a: 'c {
     #[cfg(feature = "debug")] indent: u8,
 }
 
-impl FromError<symbol::Error> for Error {
-    fn from_error(e: symbol::Error) -> Self {
+impl From<symbol::Error> for Error {
+    fn from(e: symbol::Error) -> Self {
         Error::Symbol(e)
     }
 }
 
-impl FromError<ty::Error> for Error {
-    fn from_error(e: ty::Error) -> Self {
+impl From<ty::Error> for Error {
+    fn from(e: ty::Error) -> Self {
         Error::Ty(e)
     }
 }

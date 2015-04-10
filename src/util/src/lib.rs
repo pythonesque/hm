@@ -1,4 +1,4 @@
-#![feature(core,rustc_private,static_assert,std_misc)]
+#![feature(core,rustc_private,static_assert)]
 
 extern crate rustc;
 

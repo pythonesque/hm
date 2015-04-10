@@ -5,7 +5,6 @@ use std::default::Default;
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::num::Int;
 
 type S = u32;
 
@@ -16,7 +15,7 @@ pub struct Error;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Could not generate a new unique symbol, because the symbol table limit ({}) was reached.", <S as Int>::max_value())
+        write!(f, "Could not generate a new unique symbol, because the symbol table limit ({}) was reached.", S::max_value())
     }
 }
 
@@ -58,7 +57,7 @@ pub struct Symbols<'a> {
 
 fn get_next_sym(next_sym: &mut S) -> Result<S,Error> {
     let i = *next_sym;
-    *next_sym = match i.checked_add(Int::one()) {
+    *next_sym = match i.checked_add(1) {
         Some(i) => i,
         None => return Err(Error)
     };
