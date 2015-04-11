@@ -19,7 +19,6 @@ use std::cell::Cell;
 #[cfg(feature = "debug")] use std::cmp;
 use std::fmt;
 use std::iter::repeat;
-#[cfg(feature = "debug")] use std::num::Int;
 
 pub mod exp;
 pub mod ty;

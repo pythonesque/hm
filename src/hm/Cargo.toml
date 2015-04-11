@@ -4,5 +4,9 @@ name = "hm"
 version = "0.0.1"
 authors = ["Joshua Yanovski <pythonesque@gmail.com>"]
 
+[features]
+
+debug = []
+
 [dependencies.util]
 path = "../util"
