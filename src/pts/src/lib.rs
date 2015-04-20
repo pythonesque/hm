@@ -1,3 +1,4 @@
+#![feature(box_patterns)]
 #![cfg_attr(test, feature(test))]
 
 extern crate util;
@@ -12,9 +13,8 @@ mod tests {
     extern crate test;
 
     use super::{parse};
-    use util::symbol::Symbols;
 
-    fn bench<'a,B,F>(mut b: B, mut _symbols: Symbols<'a>, closure: F)
+    fn bench<'a,B,F>(mut b: B, closure: F)
         where F: Fn(),
               B: FnMut(&mut FnMut())
     {
@@ -67,17 +67,16 @@ foo
     #[test]
     fn it_works() {
 
-        let mut symbols = Symbols::new();
-        let exp1 = parse("pi id lambda x 0 . x . id n", &mut symbols).unwrap();
+        let exp1 = parse("pi id lambda x 0 . x . id n").unwrap();
         let exp2 = parse("
 pi bar lambda x 0 .
     pi foo lambda y 1 . x
     . foo
-. bar", &mut symbols).unwrap();
-        let exp3 = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
-        let exp4 = parse(BINARY_SUMS, &mut symbols).unwrap();
-        let exp5 = parse(OCCURS_CHECK, &mut symbols).unwrap();
-        bench(|t| t(), symbols, move || {
+. bar").unwrap();
+        let exp3 = parse(BINARY_PRODUCTS).unwrap();
+        let exp4 = parse(BINARY_SUMS).unwrap();
+        let exp5 = parse(OCCURS_CHECK).unwrap();
+        bench(|t| t(), move || {
             println!("{}", exp1);
             println!("{}", exp2);
             println!("{}", exp3);
@@ -88,31 +87,22 @@ pi bar lambda x 0 .
 
     #[bench]
     fn bench_trivial_hm(b: &mut test::Bencher) {
-        let mut symbols = Symbols::new();
-        let _exp = parse(
-            TRIVIAL,
-            &mut symbols).unwrap();
-        bench(|t| b.iter(|| t()), symbols, move || {
+        let _exp = parse(TRIVIAL).unwrap();
+        bench(|t| b.iter(|| t()), move || {
         });
     }
 
     #[bench]
     fn bench_binary_products_hm(b: &mut test::Bencher) {
-        let mut symbols = Symbols::new();
-        let _exp = parse(
-            BINARY_PRODUCTS,
-            &mut symbols).unwrap();
-        bench(|t| b.iter(|| t()), symbols, move || {
+        let _exp = parse(BINARY_PRODUCTS).unwrap();
+        bench(|t| b.iter(|| t()), move || {
         });
     }
 
     #[bench]
     fn bench_binary_sums_hm(b: &mut test::Bencher) {
-        let mut symbols = Symbols::new();
-        let _exp = parse(
-            BINARY_SUMS,
-            &mut symbols).unwrap();
-        bench(|t| b.iter(|| t()), symbols, move || {
+        let _exp = parse(BINARY_SUMS).unwrap();
+        bench(|t| b.iter(|| t()), move || {
         });
     }
 }

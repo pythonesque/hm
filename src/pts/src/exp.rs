@@ -1,37 +1,32 @@
 use self::Exp as E;
-use util::symbol::{Symbol, Symbols};
 
 use std::fmt;
 
-pub type Var<'a> = Symbol<'a>;
+pub type Var = u32; // De Bruijn index
 
-pub type Const<'a> = Symbol<'a>;
+pub type Const = u32;
 
-pub enum Exp<'a> {
-    Var(Var<'a>),
-    Const(Const<'a>),
-    Abs(Var<'a>, Box<Exp<'a>>, Box<Exp<'a>>),
-    App(Box<Exp<'a>>, Box<Exp<'a>>),
-    Prod(Var<'a>, Box<Exp<'a>>, Box<Exp<'a>>),
+pub enum Exp {
+    Var(Var),
+    Const(Const),
+    Abs(Box<(Exp, Exp)>),
+    App(Box<(Exp, Exp)>),
+    Prod(Box<(Exp, Exp)>),
 }
 
-impl<'a> fmt::Display for Exp<'a> {
+impl<'a> fmt::Display for Exp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            E::Var(ref x) => Symbols::new().fmt(f, x),
-            E::Const(ref x) => Symbols::new().fmt(f, x),
-            E::Abs(ref x, ref e1, ref e2) => {
-                try!(write!(f, "λ"));
-                try!(Symbols::new().fmt(f, x));
-                write!(f, ": {}. {}", e1, e2)
+            E::Var(ref x) => x.fmt(f),
+            E::Const(ref x) => write!(f, "S{}", x),
+            E::Abs(box (ref e1, ref e2)) => {
+                write!(f, "λ({}). {}", e1, e2)
             },
-            E::App(ref e1, ref e2) => {
+            E::App(box (ref e1, ref e2)) => {
                 write!(f, "{} {}", e1, e2)
             },
-            E::Prod(ref x, ref e1, ref e2) => {
-                try!(write!(f, "Π"));
-                try!(Symbols::new().fmt(f, x));
-                write!(f, ": {}. {}", e1, e2)
+            E::Prod(box (ref e1, ref e2)) => {
+                write!(f, "Π({}). {}", e1, e2)
             },
         }
     }
@@ -40,9 +35,10 @@ impl<'a> fmt::Display for Exp<'a> {
 pub mod parse {
     use self::ErrorKind as EK;
     use self::Tok as T;
+    use super::{Const, Var};
     use super::Exp as E;
-    use util::symbol::{Symbol, Symbols};
 
+    use std::collections::VecDeque;
     use std::fmt;
 
     #[derive(Debug)]
@@ -64,7 +60,8 @@ pub mod parse {
     #[derive(Clone,Copy,Debug)]
     pub enum ErrorKind {
         Parse,
-        Symbol,
+        NatOverflow,
+        DeBruijnOverflow
     }
 
     pub type Res<T> = Result<T, Error>;
@@ -102,83 +99,123 @@ pub mod parse {
         pos: usize,
     }
 
-    type PRes<'a> = Res<(E<'a>, Ctx<'a>)>;
+    struct Env<'a> {
+        vars: VecDeque<&'a str>, // Rightmost in vector = innermost bound variable
+    }
+
+    type PRes<'a> = Res<(E, Ctx<'a>)>;
 
     fn err<'a,T>(ctx: Ctx<'a>, kind: EK) -> Res<T> {
         Err(Error { pos: ctx.pos, kind: kind })
     }
 
-    fn sym<'a>(ctx: Ctx<'a>, name: &'a str, symbols: &mut Symbols<'a>) -> Res<Symbol<'a>> {
-        symbols.symbol(name).or_else( |_| err(ctx, EK::Symbol))
-    }
-
-    fn parse_sym<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> Res<(Symbol<'a>, Ctx<'a>)> {
+    fn parse_sym<'a>(ctx: Ctx<'a>) -> Res<(&'a str, Ctx<'a>)> {
         let (tok, rest) = read_tok(ctx);
         match tok {
-            T::Ident(i) => Ok((try!(sym(ctx, i, symbols)), rest)),
+            T::Ident(i) => Ok((i, rest)),
             _ => err(ctx, EK::Parse)
         }
     }
 
-    fn parse_abs<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
-        let (x, rest) = try!(parse_sym(ctx, symbols));
-        let (e1, rest) = try!(parse_exp(rest, symbols));
+    fn parse_var<'a>(ctx: Ctx<'a>, tok: &'a str, env: &mut Env<'a>) -> Res<Var> {
+        match env.vars.iter().rev().position( |&v| v == tok) {
+            Some(idx) => Ok(idx as Var),
+            None => {
+                let idx = env.vars.len() as Var;
+                match idx.checked_add(1) {
+                    Some(_) => {
+                        // Total number free <= total length, so safe to add a free var
+                        // (Might be able to squeeze in one more, but is it really worth it?)
+                        env.vars.push_front(tok);
+                        Ok(idx)
+                    },
+                    None => err(ctx, EK::DeBruijnOverflow)
+                }
+            }
+        }
+    }
+
+    fn parse_const<'a>(ctx: Ctx<'a>, tok: &'a str) -> Res<Const> {
+        match tok.parse() {
+            Ok(n) => Ok(n),
+            Err(_) => err(ctx, EK::NatOverflow)
+        }
+    }
+
+    fn bind_var<'a>(ctx: Ctx<'a>, tok: &'a str, env: &mut Env<'a>) -> Res<()> {
+        match (env.vars.len() as Var).checked_add(1) {
+            Some(_) => {
+                // Safe to add another variable
+                env.vars.push_back(tok);
+                Ok(())
+            },
+            None => err(ctx, EK::DeBruijnOverflow)
+        }
+    }
+
+    fn parse_abs<'a>(ctx: Ctx<'a>, env: &mut Env<'a>) -> PRes<'a> {
+        let (x, rest) = try!(parse_sym(ctx));
+        let (e1, rest) = try!(parse_exp(rest, env));
         let rest = match read_tok(rest) {
             (T::Dot, rest) => rest,
             _ => return err(rest, EK::Parse)
         };
-        let (e2, rest) = try!(parse_exp(rest, symbols));
-        Ok((E::Abs(x, Box::new(e1), Box::new(e2)), rest))
+        try!(bind_var(ctx, x, env));
+        let (e2, rest) = try!(parse_exp(rest, env));
+        env.vars.pop_back();
+        Ok((E::Abs(Box::new((e1, e2))), rest))
     }
 
-    fn parse_prod<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
-        let (x, rest) = try!(parse_sym(ctx, symbols));
-        let (e1, rest) = try!(parse_exp(rest, symbols));
+    fn parse_prod<'a>(ctx: Ctx<'a>, env: &mut Env<'a>) -> PRes<'a> {
+        let (x, rest) = try!(parse_sym(ctx));
+        let (e1, rest) = try!(parse_exp(rest, env));
         let rest = match read_tok(rest) {
             (T::Dot, rest) => rest,
             _ => return err(rest, EK::Parse)
         };
-        let (e2, rest) = try!(parse_exp(rest, symbols));
-        Ok((E::Prod(x, Box::new(e1), Box::new(e2)), rest))
+        try!(bind_var(ctx, x, env));
+        let (e2, rest) = try!(parse_exp(rest, env));
+        env.vars.pop_back();
+        Ok((E::Prod(Box::new((e1, e2))), rest))
     }
 
-    fn parse_app<'a>(mut ctx: Ctx<'a>, symbols: &mut Symbols<'a>, mut e1: E<'a>) -> PRes<'a> {
+    fn parse_app<'a>(mut ctx: Ctx<'a>, env: &mut Env<'a>, mut e1: E) -> PRes<'a> {
         loop {
             let (tok, rest) = read_tok(ctx);
             let (e2, rest) = match tok {
                 T::EOF | T::Dot => return Ok((e1, ctx)),
-                T::Ident(i) => (E::Var(try!(sym(ctx, i, symbols))), rest),
-                T::Nat(i) => (E::Const(try!(sym(ctx, i, symbols))), rest),
-                T::Lambda => try!(parse_abs(rest, symbols)),
-                T::Pi => try!(parse_prod(rest, symbols)),
+                T::Ident(i) => (E::Var(try!(parse_var(ctx, i, env))), rest),
+                T::Nat(i) => (E::Const(try!(parse_const(ctx, i))), rest),
+                T::Lambda => try!(parse_abs(rest, env)),
+                T::Pi => try!(parse_prod(rest, env)),
             };
-            e1 = E::App(Box::new(e1), Box::new(e2));
+            e1 = E::App(Box::new((e1, e2)));
             ctx = rest;
         }
     }
 
-    fn parse_exp<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
+    fn parse_exp<'a>(ctx: Ctx<'a>, env: &mut Env<'a>) -> PRes<'a> {
         let (tok, rest) = read_tok(ctx);
         let (exp, rest) = match tok {
-            T::Ident(i) => (E::Var(try!(sym(ctx, i, symbols))), rest),
-            T::Nat(i) => (E::Const(try!(sym(ctx, i, symbols))), rest),
-            T::Lambda => try!(parse_abs(rest, symbols)),
-            T::Pi => try!(parse_prod(rest, symbols)),
+            T::Ident(i) => (E::Var(try!(parse_var(ctx, i, env))), rest),
+            T::Nat(i) => (E::Const(try!(parse_const(ctx, i))), rest),
+            T::Lambda => try!(parse_abs(rest, env)),
+            T::Pi => try!(parse_prod(rest, env)),
             _ => return err(ctx, EK::Parse),
         };
-        parse_app(rest, symbols, exp)
+        parse_app(rest, env, exp)
     }
 
-    fn parse_prog<'a>(ctx: Ctx<'a>, symbols: &mut Symbols<'a>) -> PRes<'a> {
-        parse_exp(ctx, symbols)
+    fn parse_prog<'a>(ctx: Ctx<'a>, env: &mut Env<'a>) -> PRes<'a> {
+        parse_exp(ctx, env)
             .and_then( |(exp,rest)| match read_tok(rest) {
                 (T::EOF, rest) => Ok((exp, rest)),
                 _ => err(rest, EK::Parse),
             } )
     }
 
-    pub fn parse<'a>(s: &'a str, symbols: &mut Symbols<'a>) -> Res<E<'a>> {
-        parse_prog(Ctx { s: s, pos: 0 }, symbols)
+    pub fn parse<'a>(s: &'a str) -> Res<E> {
+        parse_prog(Ctx { s: s, pos: 0 }, &mut Env { vars: VecDeque::new() })
             .map( |(exp,_)| exp )
     }
 }

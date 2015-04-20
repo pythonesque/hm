@@ -1,12 +1,13 @@
 use exp::Const;
 
-pub type Sort<'a> = Const<'a>;
+pub type Sort = Const;
 
-pub type Axioms<'a> = Vec<(Const<'a>, Sort<'a>)>;
+pub type Axioms = Vec<(Const, Sort)>;
 
-pub type Rules<'a> = Vec<(Sort<'a>, Sort<'a>, Sort<'a>)>;
+// Only dealing with functional PTSes for the time being.
+pub type Rules = Vec<(Sort, Sort)>;
 
-pub struct Spec<'a> {
-    axioms: Axioms<'a>,
-    rules: Rules<'a>
+pub struct Spec {
+    axioms: Axioms,
+    rules: Rules,
 }
