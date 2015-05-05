@@ -280,17 +280,36 @@ mod tests {
     {
         let int = TyFun { name: symbols.symbol("int").unwrap(), arity: 0 };
         let boolean = TyFun { name: symbols.symbol("bool").unwrap(), arity: 0 };
+        let fun = TyFun { name: symbols.symbol("→").unwrap(), arity: 2 };
+        let functor = TyFun { name: symbols.symbol("Set").unwrap(), arity: 1 };
         let n = symbols.symbol("n").unwrap();
         let t = symbols.symbol("true").unwrap();
         let f = symbols.symbol("false").unwrap();
+        let functor_cons = symbols.symbol("F").unwrap();
+        let functor_var = symbols.fresh().unwrap();
+        let lfix = symbols.symbol("T").unwrap();
+        let lfix_var = symbols.fresh().unwrap();
         b( &mut || {
-            let (arena,sym_arena,n_ty,t_ty,f_ty) = (
-                TypedArena::new(),
-                TypedArena::new(),
-                MonoTy { ty: Cell::new(MT::App(int, &[])), uf: UnionFind::new() },
-                MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() },
-                MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() },
-            );
+            let ((arena, sym_arena), n_ty, (t_ty, f_ty), (/*(functor_v1, functor_ty1), */(functor_v2, functor_ty),), (/*(lfix_v1, lfix_ty1), */(lfix_v2, lfix_ty2), (lfix_v3, lfix_ty)));
+            arena = TypedArena::new();
+            sym_arena = TypedArena::new();
+            n_ty = MonoTy { ty: Cell::new(MT::App(int, &[])), uf: UnionFind::new() };
+            t_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
+            f_ty = MonoTy { ty: Cell::new(MT::App(boolean, &[])), uf: UnionFind::new() };
+            //functor_v1 = [MonoTy { ty: Cell::new(MT::Var(functor_var)), uf: UnionFind::new() }];
+            //functor_ty1 = MonoTy { ty: Cell::new(MT::App(functor, &functor_v1)), uf: UnionFind::new() };
+            //functor_v2 = [MonoTy { ty: Cell::new(MT::Var(functor_var)), uf: UnionFind::new() }, functor_ty1];
+            functor_v2 = [MonoTy { ty: Cell::new(MT::Var(functor_var)), uf: UnionFind::new() }, MonoTy { ty: Cell::new(MT::Var(functor_var)), uf: UnionFind::new() }];
+            functor_ty = MonoTy { ty: Cell::new(MT::App(fun, &functor_v2)), uf: UnionFind::new() };
+            //lfix_v1 = [MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }];
+            //lfix_ty1 = MonoTy { ty: Cell::new(MT::App(functor, &lfix_v1)), uf: UnionFind::new() };
+            //lfix_v2 = [lfix_ty1, MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }];
+            lfix_v2 = [MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }, MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }];
+            lfix_ty2 = MonoTy { ty: Cell::new(MT::App(fun, &lfix_v2)), uf: UnionFind::new() };
+            //lfix_ty_var = [MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }];
+            //lfix_ty_vars = iter::repeat(lfix_var).take(2).map( |&v| MonoTy { ty: Cell::new(MT::Var(v)), uf: UnionFind::new() } ).collect();
+            lfix_v3 = [lfix_ty2, MonoTy { ty: Cell::new(MT::Var(lfix_var)), uf: UnionFind::new() }];
+            lfix_ty = MonoTy { ty: Cell::new(MT::App(fun, &lfix_v3)), uf: UnionFind::new() };
             let assumptions = symbols.empty();
             let mut ctx = Ctx::new(assumptions, &mut symbols).unwrap();
             //ctx.tys.push(Ty::Quant(vec![], &n_ty));
@@ -302,6 +321,8 @@ mod tests {
             //ctx.tys.push(Ty::Quant(vec![], &f_ty));
             //ctx.assumptions.enter(&f, 2);
             ctx.assumptions.enter(&f, Ty::Quant(vec![], &f_ty));
+            ctx.assumptions.enter(&functor_cons, Ty::Quant(vec![functor_var], &functor_ty));
+            ctx.assumptions.enter(&lfix, Ty::Quant(vec![lfix_var], &lfix_ty));
             closure(ctx, &sym_arena, &arena);
         });
     }
@@ -346,6 +367,17 @@ in f lambda x lambda y y
 let foo lambda x x x in
 foo
 ";
+    static FIXPOINT: &'static str = r"
+let fold lambda X lambda k lambda t
+    t X k in
+let in' lambda s lambda X lambda k
+    let f1 fold X k in
+    let f2 F f1 s in
+    k f2 in
+
+let e1 F T
+in in' e1
+";
 
     #[test]
     fn it_works() {
@@ -362,6 +394,7 @@ in bar", &mut symbols).unwrap();
         let exp3 = parse(BINARY_PRODUCTS, &mut symbols).unwrap();
         let exp4 = parse(BINARY_SUMS, &mut symbols).unwrap();
         let exp5 = parse(OCCURS_CHECK, &mut symbols).unwrap();
+        let exp6 = parse(FIXPOINT, &mut symbols).unwrap();
         bench(|t| t(), symbols, move |mut ctx, sym_arena, arena| {
             let ty = hm(&mut ctx, &exp1, sym_arena, arena).unwrap();
             assert_eq!(MT::App(int, &[]), find_immutable(&ty).ty.get());
@@ -374,7 +407,12 @@ in bar", &mut symbols).unwrap();
             let ty = hm(&mut ctx, &exp4, sym_arena, arena).unwrap();
             assert_eq!(MT::App(bool, &[]), find_immutable(&ty).ty.get());
 
+            let ty = hm(&mut ctx, &exp4, sym_arena, arena).unwrap();
+            assert_eq!(MT::App(bool, &[]), find_immutable(&ty).ty.get());
+
             hm(&mut ctx, &exp5, sym_arena, arena).err().expect("Occurs check failed");
+
+            hm(&mut ctx, &exp6, sym_arena, arena).unwrap();
         });
     }
 
